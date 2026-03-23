@@ -26,7 +26,7 @@ These modules are intentionally small so coding agents can own one area at a tim
 
 ## Example Task Splits
 
-- one coding agent implements screenshot parsing in a new observer module
+- one coding agent implements save-file parsing in the observer module
 - one coding agent adds input automation in a new executor module
 - one coding agent writes tests for state parsing and action validation
 - one coding agent reviews logs and proposes heuristic improvements
@@ -39,3 +39,12 @@ Validation can happen in two places:
 - development validation: tests, reviews, and result checks on delegated code changes
 
 Both are useful, but they solve different problems.
+
+## Agent 1 Focus
+
+The first good delegated slice for this repo is observation:
+
+- inspect `C:/Users/luiga/AppData/Roaming/Balatro`
+- decode `save.jkr` and related files
+- surface structured state for gameplay decisions
+- define a lightweight screenshot plan only for click targeting

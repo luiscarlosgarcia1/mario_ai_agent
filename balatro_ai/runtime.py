@@ -81,6 +81,7 @@ def create_demo_runner() -> EpisodeRunner:
             hands_left=4,
             discards_left=3,
             score_to_beat=300,
+            source="mock",
             notes=("Small blind available.",),
         ),
         GameObservation(
@@ -91,6 +92,8 @@ def create_demo_runner() -> EpisodeRunner:
             score_to_beat=300,
             current_score=90,
             jokers=("Greedy Joker",),
+            source="mock",
+            blind_name="Small Blind",
         ),
         GameObservation(
             phase="shop",
@@ -100,6 +103,7 @@ def create_demo_runner() -> EpisodeRunner:
             score_to_beat=300,
             current_score=420,
             jokers=("Greedy Joker",),
+            source="mock",
         ),
     ]
     return EpisodeRunner(

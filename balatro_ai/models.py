@@ -5,6 +5,21 @@ from datetime import datetime, timezone
 
 
 @dataclass(frozen=True)
+class ObservedCard:
+    """Compact card summary extracted from the save payload."""
+
+    area: str
+    code: str | None = None
+    name: str | None = None
+    facing: str | None = None
+    enhancement: str | None = None
+    edition: str | None = None
+    seal: str | None = None
+    debuffed: bool = False
+    modifiers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class GameObservation:
     """Structured snapshot of the current game state."""
 
@@ -15,6 +30,13 @@ class GameObservation:
     score_to_beat: int
     current_score: int = 0
     jokers: tuple[str, ...] = ()
+    hand_cards: tuple[ObservedCard, ...] = ()
+    source: str = "unknown"
+    state_id: int | None = None
+    blind_name: str | None = None
+    blind_key: str | None = None
+    cards_in_hand: int | None = None
+    jokers_count: int | None = None
     notes: tuple[str, ...] = ()
     seen_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
