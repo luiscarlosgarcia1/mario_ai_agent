@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import re
 import zlib
@@ -66,6 +67,10 @@ class BalatroPaths:
         return self.root / "settings.jkr"
 
     @property
+    def ai_dir(self) -> Path:
+        return self.root / "ai"
+
+    @property
     def profile_dir(self) -> Path:
         return self.root / str(self.profile)
 
@@ -80,6 +85,10 @@ class BalatroPaths:
     @property
     def meta_path(self) -> Path:
         return self.profile_dir / "meta.jkr"
+
+    @property
+    def live_state_path(self) -> Path:
+        return self.ai_dir / "live_state.json"
 
     def available_profiles(self) -> tuple[int, ...]:
         profiles: list[int] = []
@@ -148,8 +157,106 @@ class BalatroSaveObserver:
         self.capture_plan = capture_plan or LightweightCapturePlan.default()
 
     def observe(self) -> GameObservation:
+        live_observation = self.read_live_observation()
+        if live_observation is not None:
+            return live_observation
+
         snapshot = self.read_snapshot()
         return self._build_observation(snapshot)
+
+    def read_live_observation(self) -> GameObservation | None:
+        path = self.paths.live_state_path
+        if not path.exists():
+            return None
+
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        state = payload.get("state")
+        if not isinstance(state, dict):
+            state = payload
+        if not isinstance(state, dict):
+            return None
+
+        hand_cards_payload = state.get("hand_cards")
+        hand_cards: list[ObservedCard] = []
+        if isinstance(hand_cards_payload, list):
+            for item in hand_cards_payload:
+                if not isinstance(item, dict):
+                    continue
+                modifiers = item.get("modifiers")
+                hand_cards.append(
+                    ObservedCard(
+                        area=str(item.get("area", "hand")),
+                        code=self._string_or_none(item.get("code")),
+                        name=self._string_or_none(item.get("name")),
+                        facing=self._string_or_none(item.get("facing")),
+                        enhancement=self._string_or_none(item.get("enhancement")),
+                        edition=self._string_or_none(item.get("edition")),
+                        seal=self._string_or_none(item.get("seal")),
+                        debuffed=bool(item.get("debuffed", False)),
+                        modifiers=tuple(
+                            str(value) for value in modifiers
+                        ) if isinstance(modifiers, list) else (),
+                    )
+                )
+
+        notes = state.get("notes")
+        if not isinstance(notes, list):
+            notes = []
+
+        jokers_payload = state.get("jokers")
+        jokers: list[str] = []
+        if isinstance(jokers_payload, list):
+            for item in jokers_payload:
+                if item is None:
+                    continue
+                if isinstance(item, dict):
+                    label = self._string_or_none(item.get("name")) or self._string_or_none(item.get("label"))
+                    if label:
+                        jokers.append(label)
+                    continue
+                jokers.append(str(item))
+
+        seen_at_raw = state.get("seen_at")
+        seen_at = None
+        if isinstance(seen_at_raw, str):
+            try:
+                seen_at = datetime.fromisoformat(seen_at_raw)
+            except ValueError:
+                seen_at = None
+        if seen_at is None:
+            seen_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+
+        return GameObservation(
+            phase=str(state.get("phase", state.get("state", "unknown"))),
+            money=self._int_or_zero(state.get("money")),
+            hands_left=self._int_or_zero(state.get("hands_left")),
+            discards_left=self._int_or_zero(state.get("discards_left")),
+            score_to_beat=self._int_or_zero(
+                state.get("score_to_beat", state.get("target"))
+            ),
+            current_score=self._int_or_zero(
+                state.get("current_score", state.get("score"))
+            ),
+            jokers=tuple(jokers),
+            hand_cards=tuple(hand_cards),
+            source=str(state.get("source", "live_export")),
+            state_id=self._int_or_none(state.get("state_id")),
+            blind_name=self._string_or_none(
+                state.get("blind_name", state.get("blind"))
+            ),
+            blind_key=self._string_or_none(state.get("blind_key")),
+            cards_in_hand=self._int_or_none(state.get("cards_in_hand")),
+            jokers_count=self._int_or_none(state.get("jokers_count")),
+            notes=tuple(str(value) for value in notes if value is not None),
+            seen_at=seen_at,
+        )
 
     def read_snapshot(self) -> SaveSnapshot:
         raw_payload = self.decoder.decode_file(self.paths.save_path)
@@ -593,6 +700,25 @@ class BalatroSaveObserver:
     def _format_number(self, value: float | int) -> str:
         if isinstance(value, float) and value.is_integer():
             return str(int(value))
+        return str(value)
+
+    def _int_or_zero(self, value: object) -> int:
+        return self._int_or_none(value) or 0
+
+    def _int_or_none(self, value: object) -> int | None:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str) and re.fullmatch(r"-?\d+", value):
+            return int(value)
+        return None
+
+    def _string_or_none(self, value: object) -> str | None:
+        if value is None:
+            return None
         return str(value)
 
     def _unescape(self, value: str) -> str:

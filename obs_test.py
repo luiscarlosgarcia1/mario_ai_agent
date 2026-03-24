@@ -76,9 +76,10 @@ def main() -> None:
 
     print(f"[obs_test] profile={args.profile} output={run_dir}")
     print(f"[obs_test] save path: {paths.save_path}")
+    print(f"[obs_test] live path: {paths.live_state_path}")
 
-    if not paths.save_path.exists():
-        print("[obs_test] save file does not exist yet; waiting for it to appear.")
+    if not paths.save_path.exists() and not paths.live_state_path.exists():
+        print("[obs_test] no save or live-state file exists yet; waiting for one to appear.")
 
     target = resolve_capture_target(
         manual_rect=tuple(args.rect) if args.rect else None,
@@ -96,23 +97,23 @@ def main() -> None:
                 f"({target.left}, {target.top}, {target.width}, {target.height})"
             )
 
-    last_mtime: float | None = None
+    last_stamp: tuple[float | None, float | None] | None = None
     sequence = 0
 
     while True:
-        if not paths.save_path.exists():
+        stamp = current_input_stamp(paths)
+        if stamp is None:
             if args.once:
-                print("[obs_test] save file is missing; nothing to parse in one-shot mode.")
+                print("[obs_test] no save or live-state file is available in one-shot mode.")
                 return
             time.sleep(args.poll_interval)
             continue
 
-        current_mtime = paths.save_path.stat().st_mtime
-        should_emit = last_mtime is None or current_mtime != last_mtime
+        should_emit = last_stamp is None or stamp != last_stamp
 
         if should_emit:
             sequence += 1
-            last_mtime = current_mtime
+            last_stamp = stamp
             try:
                 observation = observer.observe()
             except Exception as exc:
@@ -144,6 +145,20 @@ def main() -> None:
                 return
 
         time.sleep(args.poll_interval)
+
+
+def current_input_stamp(paths: BalatroPaths) -> tuple[float | None, float | None] | None:
+    live_mtime = None
+    save_mtime = None
+
+    if paths.live_state_path.exists():
+        live_mtime = paths.live_state_path.stat().st_mtime
+    if paths.save_path.exists():
+        save_mtime = paths.save_path.stat().st_mtime
+
+    if live_mtime is None and save_mtime is None:
+        return None
+    return (live_mtime, save_mtime)
 
 
 def format_observation(observation) -> str:
