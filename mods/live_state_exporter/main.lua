@@ -4,7 +4,7 @@
 --- MOD_AUTHOR: [luiga]
 --- MOD_DESCRIPTION: Writes compact live Balatro state snapshots to ai/live_state.json for external agents.
 --- PREFIX: live_state_exporter
---- VERSION: 0.1.0
+--- VERSION: 0.2.0
 
 local EXPORT_DIR = "ai"
 local EXPORT_FILE = "live_state.json"
@@ -12,6 +12,10 @@ local EXPORT_PATH = EXPORT_DIR .. "/" .. EXPORT_FILE
 local EXPORT_INTERVAL_SECONDS = 0.05
 local EXPORT_MAX_HAND_CARDS = 20
 local EXPORT_MAX_JOKERS = 8
+local EXPORT_MAX_CONSUMABLES = 10
+local EXPORT_MAX_VOUCHERS = 8
+local EXPORT_MAX_TAGS = 8
+local EXPORT_MAX_PACKS = 4
 local EXPORT_MAX_STRING = 80
 local unpack_fn = table.unpack or unpack
 
@@ -79,6 +83,10 @@ local function safe_table(value)
     return value
   end
   return nil
+end
+
+local function safe_bool(value)
+  return not not value
 end
 
 local function is_array(tbl)
@@ -171,6 +179,22 @@ local function format_modifier(name, value, default)
   return tostring(name) .. "=" .. tostring(value)
 end
 
+local function push_unique(items, seen, key, value)
+  if key == nil or seen[key] then
+    return
+  end
+  seen[key] = true
+  items[#items + 1] = value
+end
+
+local function card_list_from_area(area)
+  local area_table = safe_table(area)
+  if not area_table then
+    return {}
+  end
+  return safe_table(area_table.cards) or {}
+end
+
 local function summarize_card(card, area_name)
   if type(card) ~= "table" then
     return nil
@@ -232,7 +256,7 @@ local function summarize_card(card, area_name)
     enhancement = enhancement,
     edition = safe_tostring(first_non_nil(edition.type, edition.key, edition.name)),
     seal = safe_tostring(first_non_nil(card.seal, base.seal)),
-    debuffed = not not first_non_nil(card.debuffed, card.debuff),
+    debuffed = safe_bool(first_non_nil(card.debuffed, card.debuff)),
     modifiers = modifiers,
   }
 end
@@ -243,19 +267,210 @@ local function summarize_joker(card)
   end
 
   local ability = safe_table(card.ability) or {}
-  local label = safe_tostring(first_non_nil(card.label, ability.name, ability.key, card.name, card.key))
-  if not label then
+  local edition = safe_table(card.edition) or {}
+  local modifiers = {}
+  local function add_modifier(name, value, default)
+    local formatted = format_modifier(name, value, default)
+    if formatted then
+      modifiers[#modifiers + 1] = formatted
+    end
+  end
+
+  add_modifier("mult", first_non_nil(ability.mult, card.mult), 0)
+  add_modifier("chips", first_non_nil(ability.chips, card.chips), 0)
+  add_modifier("x_mult", first_non_nil(ability.x_mult, card.x_mult), 1)
+  add_modifier("x_chips", first_non_nil(ability.x_chips, card.x_chips), 1)
+  add_modifier("dollars", first_non_nil(ability.dollars, card.dollars), 0)
+  add_modifier("extra", ability.extra, 0)
+
+  for _, flag in ipairs({ "eternal", "perishable", "rental", "pinned" }) do
+    if ability[flag] or card[flag] then
+      modifiers[#modifiers + 1] = flag
+    end
+  end
+
+  if first_non_nil(card.debuffed, card.debuff) then
+    modifiers[#modifiers + 1] = "debuffed"
+  end
+
+  local name = safe_tostring(first_non_nil(card.label, ability.name, ability.key, card.name, card.key))
+  if not name then
     return nil
   end
 
-  return trim_text(label, EXPORT_MAX_STRING)
+  return {
+    name = trim_text(name, EXPORT_MAX_STRING),
+    key = safe_tostring(first_non_nil(ability.key, card.key)),
+    edition = safe_tostring(first_non_nil(edition.type, edition.key, edition.name)),
+    debuffed = safe_bool(first_non_nil(card.debuffed, card.debuff)),
+    modifiers = modifiers,
+  }
+end
+
+local function summarize_voucher(value, key_hint)
+  local voucher = safe_table(value) or {}
+  local key = safe_tostring(first_non_nil(voucher.key, key_hint))
+  local name = safe_tostring(first_non_nil(voucher.name, voucher.label, key))
+  if not name and not key then
+    return nil
+  end
+  return {
+    name = trim_text(name or key or "voucher", EXPORT_MAX_STRING),
+    key = key,
+  }
+end
+
+local function collect_value_entries(payload, limit, summarize_fn)
+  local result = {}
+  local seen = {}
+  local function add_summary(summary)
+    if summary and #result < limit then
+      push_unique(result, seen, summary.key or summary.name, summary)
+    end
+  end
+
+  local kind = type(payload)
+  if kind == "table" then
+    if payload.cards then
+      for _, item in ipairs(card_list_from_area(payload)) do
+        add_summary(summarize_fn(item))
+      end
+      return result
+    end
+
+    local found_entry = false
+    for key, item in pairs(payload) do
+      if type(key) == "number" then
+        found_entry = true
+        if type(item) == "table" then
+          add_summary(summarize_fn(item, key))
+        else
+          add_summary(summarize_fn(nil, item))
+        end
+      elseif type(item) == "table" and (item.name or item.label or item.key) then
+        found_entry = true
+        add_summary(summarize_fn(item, key))
+      elseif type(item) == "string" then
+        found_entry = true
+        add_summary(summarize_fn(nil, item))
+      end
+    end
+    if found_entry then
+      return result
+    end
+
+    add_summary(summarize_fn(payload))
+    return result
+  end
+
+  if kind == "string" then
+    add_summary(summarize_fn(nil, payload))
+  end
+
+  return result
+end
+
+local function normalize_consumable_kind(raw_kind, fallback_key)
+  local kind = safe_tostring(raw_kind)
+  if kind then
+    kind = string.lower(kind)
+    if kind == "tarot" or kind == "planet" or kind == "spectral" then
+      return kind
+    end
+    if kind == "tarot card" then
+      return "tarot"
+    end
+    if kind == "planet card" then
+      return "planet"
+    end
+    if kind == "spectral card" then
+      return "spectral"
+    end
+  end
+
+  local key = safe_tostring(fallback_key)
+  if key then
+    local lowered = string.lower(key)
+    if string.find(lowered, "tarot", 1, true) then
+      return "tarot"
+    end
+    if string.find(lowered, "planet", 1, true) then
+      return "planet"
+    end
+    if string.find(lowered, "spectral", 1, true) then
+      return "spectral"
+    end
+  end
+
+  return nil
+end
+
+local function summarize_consumable(card)
+  if type(card) ~= "table" then
+    return nil
+  end
+
+  local ability = safe_table(card.ability) or {}
+  local save_fields = safe_table(card.save_fields) or {}
+  local set_name = first_non_nil(ability.set, card.set, ability.consumeable_type)
+  local key = safe_tostring(first_non_nil(ability.key, save_fields.center, card.key))
+  local kind = normalize_consumable_kind(set_name, key)
+  local name = safe_tostring(first_non_nil(ability.name, card.label, card.name, key))
+  if not kind or not name then
+    return nil
+  end
+
+  return {
+    kind = kind,
+    name = trim_text(name, EXPORT_MAX_STRING),
+    key = key,
+    cost = safe_number(first_non_nil(card.cost, card.base_cost, ability.cost)),
+  }
+end
+
+local function summarize_tag(value, key_hint)
+  local tag = safe_table(value) or {}
+  local key = safe_tostring(first_non_nil(tag.key, key_hint))
+  local name = safe_tostring(first_non_nil(tag.name, tag.label, key))
+  if not name and not key then
+    return nil
+  end
+  return {
+    name = trim_text(name or key or "tag", EXPORT_MAX_STRING),
+    key = key,
+  }
+end
+
+local function summarize_booster_pack(card)
+  if type(card) ~= "table" then
+    return nil
+  end
+
+  local ability = safe_table(card.ability) or {}
+  local key = safe_tostring(first_non_nil(ability.key, card.key))
+  local set_name = safe_tostring(first_non_nil(ability.set, card.set))
+  local kind = nil
+  if set_name then
+    kind = string.lower(set_name)
+  end
+
+  local name = safe_tostring(first_non_nil(ability.name, card.label, card.name, key))
+  if not name and not key then
+    return nil
+  end
+
+  return {
+    name = trim_text(name or key or "pack", EXPORT_MAX_STRING),
+    key = key,
+    kind = kind,
+    cost = safe_number(first_non_nil(card.cost, card.base_cost, ability.cost)),
+  }
 end
 
 local function collect_cards(area, limit, area_name)
   local result = {}
   local count = 0
-  local cards = safe_table(area and area.cards) or {}
-  for _, card in ipairs(cards) do
+  for _, card in ipairs(card_list_from_area(area)) do
     count = count + 1
     if #result < limit then
       local summary = summarize_card(card, area_name)
@@ -270,8 +485,7 @@ end
 local function collect_jokers(area, limit)
   local result = {}
   local count = 0
-  local cards = safe_table(area and area.cards) or {}
-  for _, card in ipairs(cards) do
+  for _, card in ipairs(card_list_from_area(area)) do
     count = count + 1
     if #result < limit then
       local summary = summarize_joker(card)
@@ -281,6 +495,208 @@ local function collect_jokers(area, limit)
     end
   end
   return result, count
+end
+
+local function collect_consumables_from_area(area, limit)
+  local result = {}
+  local seen = {}
+  for _, card in ipairs(card_list_from_area(area)) do
+    if #result >= limit then
+      break
+    end
+    local summary = summarize_consumable(card)
+    if summary then
+      push_unique(result, seen, summary.key or summary.name, summary)
+    end
+  end
+  return result
+end
+
+local function collect_used_vouchers(game, root)
+  local result = {}
+  local seen = {}
+  local used_vouchers = safe_table(game.used_vouchers) or {}
+  for key, value in pairs(used_vouchers) do
+    if value then
+      local summary = summarize_voucher(nil, key)
+      if summary then
+        push_unique(result, seen, summary.key or summary.name, summary)
+      end
+    end
+  end
+
+  local current_round = safe_table(game.current_round) or {}
+  local current_round_vouchers = current_round.voucher
+  if current_round_vouchers then
+    local voucher_entries = collect_value_entries(
+      current_round_vouchers,
+      EXPORT_MAX_VOUCHERS,
+      function(item, key_hint)
+        if type(item) == "table" then
+          return summarize_voucher(item, key_hint)
+        end
+        return summarize_voucher(nil, item or key_hint)
+      end
+    )
+    for _, summary in ipairs(voucher_entries) do
+      if #result >= EXPORT_MAX_VOUCHERS then
+        break
+      end
+      push_unique(result, seen, summary.key or summary.name, summary)
+    end
+  end
+
+  local round_resets = safe_table(game.round_resets) or {}
+  local round_reset_vouchers = round_resets.vouchers or round_resets.voucher_choices
+  if round_reset_vouchers then
+    local voucher_entries = collect_value_entries(
+      round_reset_vouchers,
+      EXPORT_MAX_VOUCHERS,
+      function(item, key_hint)
+        if type(item) == "table" then
+          return summarize_voucher(item, key_hint)
+        end
+        return summarize_voucher(nil, item or key_hint)
+      end
+    )
+    for _, summary in ipairs(voucher_entries) do
+      if #result >= EXPORT_MAX_VOUCHERS then
+        break
+      end
+      push_unique(result, seen, summary.key or summary.name, summary)
+    end
+  end
+
+  for _, card in ipairs(card_list_from_area(root and root.vouchers)) do
+    if #result >= EXPORT_MAX_VOUCHERS then
+      break
+    end
+    local summary = summarize_voucher(safe_table(card.ability) or card, safe_tostring(first_non_nil(card.key, safe_table(card.ability) and card.ability.key)))
+    if summary then
+      push_unique(result, seen, summary.key or summary.name, summary)
+    end
+  end
+  return result
+end
+
+local function collect_tags(game, root)
+  local result = {}
+  local seen = {}
+
+  local function add_tag(value, key_hint)
+    if #result >= EXPORT_MAX_TAGS then
+      return
+    end
+    local summary = summarize_tag(value, key_hint)
+    if summary then
+      push_unique(result, seen, summary.key or summary.name, summary)
+    end
+  end
+
+  local tags = safe_table(root and root.tags) or safe_table(game.tags) or {}
+  if is_array(tags) then
+    for _, tag in ipairs(tags) do
+      add_tag(tag, nil)
+    end
+  else
+    for key, tag in pairs(tags) do
+      add_tag(tag, key)
+    end
+  end
+
+  local round_resets = safe_table(game.round_resets) or {}
+  local blind_tags = safe_table(round_resets.blind_tags) or {}
+  for _, key in pairs(blind_tags) do
+    add_tag(nil, key)
+  end
+
+  return result
+end
+
+local function collect_booster_packs(game, root)
+  local result = {}
+  local seen = {}
+  local candidates = {
+    safe_table(game.current_round) and game.current_round.booster_packs,
+    safe_table(game.current_round) and game.current_round.pack_choices,
+    safe_table(game.current_round) and game.current_round.shop_boosters,
+    safe_table(game.current_round) and game.current_round.shop_booster,
+    game and rawget(game, "booster_packs"),
+    root and rawget(root, "shop_booster"),
+    root and rawget(root, "shop_boosters"),
+    game and rawget(game, "shop_booster"),
+    game and rawget(game, "shop_boosters"),
+  }
+
+  for _, candidate in ipairs(candidates) do
+    if candidate then
+      local entries = card_list_from_area(candidate)
+      if #entries == 0 and is_array(candidate) then
+        entries = candidate
+      elseif #entries == 0 and type(candidate) == "table" and not candidate.cards then
+        entries = { candidate }
+      end
+
+      for _, card in ipairs(entries) do
+        if #result >= EXPORT_MAX_PACKS then
+          return result
+        end
+        local summary = summarize_booster_pack(card)
+        if summary then
+          push_unique(result, seen, summary.key or summary.name, summary)
+        end
+      end
+    end
+  end
+
+  return result
+end
+
+local function collect_blind_choices(game)
+  local result = {}
+  local round_resets = safe_table(game.round_resets) or {}
+  local blind_choices = safe_table(round_resets.blind_choices) or {}
+  local blind_states = safe_table(round_resets.blind_states) or {}
+  local blind_tags = safe_table(round_resets.blind_tags) or {}
+  local slot_order = { "Small", "Big", "Boss" }
+  local seen = {}
+
+  for _, slot in ipairs(slot_order) do
+    local key = safe_tostring(blind_choices[slot])
+    if key then
+      result[#result + 1] = {
+        slot = slot,
+        key = key,
+        state = safe_tostring(blind_states[slot]),
+        tag = safe_tostring(blind_tags[slot]),
+      }
+      seen[slot] = true
+    end
+  end
+
+  for slot, key in pairs(blind_choices) do
+    if not seen[slot] then
+      result[#result + 1] = {
+        slot = safe_tostring(slot),
+        key = safe_tostring(key),
+        state = safe_tostring(blind_states[slot]),
+        tag = safe_tostring(blind_tags[slot]),
+      }
+    end
+  end
+
+  return result
+end
+
+local function summarize_deck(game)
+  local deck = safe_table(first_non_nil(game.selected_back_key, game.selected_back))
+  if not deck then
+    return nil
+  end
+  return {
+    name = safe_tostring(deck.name),
+    key = safe_tostring(deck.key),
+  }
 end
 
 local function infer_phase(root, game)
@@ -318,11 +734,24 @@ local function snapshot_game()
   local blind = safe_table(game.blind) or {}
   local current_round = safe_table(game.current_round) or {}
   local round_resets = safe_table(game.round_resets) or {}
+  local consumeables_area = first_non_nil(root and rawget(root, "consumeables"), root and rawget(root, "consumables"))
+  local consumables_inventory = collect_consumables_from_area(consumeables_area, EXPORT_MAX_CONSUMABLES)
+  local consumables_shop = collect_consumables_from_area(first_non_nil(root and rawget(root, "shop_jokers"), root and rawget(root, "shop_cards"), root and rawget(root, "shop_consumables")), EXPORT_MAX_CONSUMABLES)
+  local deck = summarize_deck(game)
+  local vouchers = collect_used_vouchers(game, root)
+  local tags = collect_tags(game, root)
+  local booster_packs = collect_booster_packs(game, root)
+  local blind_choices = collect_blind_choices(game)
+  local consumable_capacity = safe_number(first_non_nil(
+    safe_table(consumeables_area) and safe_table(consumeables_area.config) and consumeables_area.config.card_limit,
+    safe_table(consumeables_area) and safe_table(consumeables_area.config) and consumeables_area.config.temp_limit,
+    safe_table(game.starting_params) and game.starting_params.consumable_slots
+  ))
 
   return {
     meta = {
       captured_at_seconds = now(),
-      exporter_version = 1,
+      exporter_version = 2,
     },
     state = {
       source = "live_state_exporter",
@@ -333,12 +762,20 @@ local function snapshot_game()
       discards_left = safe_number(first_non_nil(current_round.discards_left, round_resets.discards, game.discards_left, game.discards)),
       blind_name = safe_tostring(first_non_nil(blind.name, game.blind_name)),
       blind_key = safe_tostring(first_non_nil(blind.config_blind, blind.key, game.blind_key)),
+      blind_choices = blind_choices,
+      deck = deck,
+      vouchers = vouchers,
       current_score = safe_number(first_non_nil(game.chips, game.current_round_score, game.score)),
       score_to_beat = safe_number(first_non_nil(blind.chips, game.score_to_beat, game.target_score)),
       cards_in_hand = hand_count,
       jokers_count = joker_count,
-      hand_cards = hand_cards,
       jokers = jokers,
+      hand_cards = hand_cards,
+      consumables_inventory = consumables_inventory,
+      consumables_shop = consumables_shop,
+      consumable_capacity = consumable_capacity,
+      tags = tags,
+      booster_packs = booster_packs,
       notes = {
         "exporter=live_state_exporter",
       },
@@ -359,13 +796,16 @@ local function make_signature(snapshot)
     safe_tostring(state.hands_left),
     safe_tostring(state.discards_left),
     safe_tostring(state.blind_name),
+    safe_tostring(state.blind_key),
+    safe_tostring(safe_table(state.deck) and state.deck.key),
     safe_tostring(state.current_score),
     safe_tostring(state.score_to_beat),
     safe_tostring(state.cards_in_hand),
     safe_tostring(state.jokers_count),
+    safe_tostring(state.consumable_capacity),
   }
 
-  local function add_card_summaries(items, field_name)
+  local function add_named_items(items, field_name)
     local labels = {}
     for _, item in ipairs(items or {}) do
       if type(item) == "table" then
@@ -377,8 +817,14 @@ local function make_signature(snapshot)
     parts[#parts + 1] = table.concat(labels, "|")
   end
 
-  add_card_summaries(state.hand_cards, "name")
-  add_card_summaries(state.jokers, "name")
+  add_named_items(state.hand_cards, "name")
+  add_named_items(state.jokers, "name")
+  add_named_items(state.vouchers, "key")
+  add_named_items(state.consumables_inventory, "key")
+  add_named_items(state.consumables_shop, "key")
+  add_named_items(state.tags, "key")
+  add_named_items(state.booster_packs, "key")
+  add_named_items(state.blind_choices, "key")
   return table.concat(parts, "::")
 end
 

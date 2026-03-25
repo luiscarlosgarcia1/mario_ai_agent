@@ -1,6 +1,6 @@
 """Balatro AI starter package."""
 
-from .observer import BalatroPaths, BalatroSaveObserver, LightweightCapturePlan
+from .observation import BalatroPaths, BalatroSaveObserver, LightweightCapturePlan
 
 __all__ = [
     "BalatroPaths",

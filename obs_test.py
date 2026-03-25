@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from balatro_ai.observer import BalatroPaths, BalatroSaveObserver, LightweightCapturePlan
+from balatro_ai.observation import BalatroPaths, BalatroSaveObserver, LightweightCapturePlan
 
 
 OUTPUT_ROOT = Path("obs_test_output")
@@ -170,15 +170,70 @@ def format_observation(observation) -> str:
         f"  state_id: {observation.state_id}",
         f"  blind: {observation.blind_name or '-'}",
         f"  blind_key: {observation.blind_key or '-'}",
+        f"  deck: {observation.deck_name or '-'}",
+        f"  deck_key: {observation.deck_key or '-'}",
         f"  money: {observation.money}",
         f"  score: {observation.current_score}/{observation.score_to_beat}",
         f"  hands_left: {observation.hands_left}",
         f"  discards_left: {observation.discards_left}",
+        f"  consumable_capacity: {observation.consumable_capacity if observation.consumable_capacity is not None else '-'}",
         f"  cards_in_hand: {observation.cards_in_hand if observation.cards_in_hand is not None else '-'}",
         f"  jokers_count: {observation.jokers_count if observation.jokers_count is not None else '-'}",
         f"  jokers: {', '.join(observation.jokers) if observation.jokers else '-'}",
+        f"  vouchers: {', '.join(voucher.name for voucher in observation.vouchers) if observation.vouchers else '-'}",
         f"  seen_at: {observation.seen_at.isoformat()}",
     ]
+    if observation.consumables_inventory:
+        lines.append("  inventory_consumables:")
+        for consumable in observation.consumables_inventory:
+            suffix = f" cost={consumable.cost}" if consumable.cost is not None else ""
+            lines.append(
+                f"    - {consumable.kind}: {consumable.name}{suffix}"
+            )
+    if observation.consumables_shop:
+        lines.append("  shop_consumables:")
+        for consumable in observation.consumables_shop:
+            suffix = f" cost={consumable.cost}" if consumable.cost is not None else ""
+            lines.append(
+                f"    - {consumable.kind}: {consumable.name}{suffix}"
+            )
+    if observation.tags:
+        lines.append("  tags:")
+        for tag in observation.tags:
+            lines.append(f"    - {tag.name}")
+    if observation.blind_choices:
+        lines.append("  blind_choices:")
+        for blind_choice in observation.blind_choices:
+            extras = []
+            if blind_choice.state:
+                extras.append(f"state={blind_choice.state}")
+            if blind_choice.tag:
+                extras.append(f"tag={blind_choice.tag}")
+            extra_text = f" [{', '.join(extras)}]" if extras else ""
+            lines.append(
+                f"    - {blind_choice.slot}: {blind_choice.key}{extra_text}"
+            )
+    if observation.booster_packs:
+        lines.append("  booster_packs:")
+        for pack in observation.booster_packs:
+            extras = []
+            if pack.kind:
+                extras.append(f"kind={pack.kind}")
+            if pack.cost is not None:
+                extras.append(f"cost={pack.cost}")
+            extra_text = f" [{', '.join(extras)}]" if extras else ""
+            lines.append(f"    - {pack.name}{extra_text}")
+    if observation.joker_details:
+        lines.append("  joker_details:")
+        for joker in observation.joker_details:
+            extras = []
+            if joker.edition:
+                extras.append(f"edition={joker.edition}")
+            if joker.debuffed:
+                extras.append("debuffed")
+            extras.extend(joker.modifiers)
+            extra_text = f" [{', '.join(extras)}]" if extras else ""
+            lines.append(f"    - {joker.name}{extra_text}")
     if observation.hand_cards:
         lines.append("  hand_cards:")
         for card in observation.hand_cards:

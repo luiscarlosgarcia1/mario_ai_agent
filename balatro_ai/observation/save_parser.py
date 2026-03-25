@@ -1,278 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
-import json
-from pathlib import Path
 import re
-import zlib
 
-from .models import GameObservation, ObservedCard
-
-
-DEFAULT_BALATRO_ROOT = Path.home() / "AppData" / "Roaming" / "Balatro"
+from ..models import GameObservation, ObservedCard, ObservedJoker
+from .save_decoder import SaveSnapshot
 
 
-@dataclass(frozen=True)
-class PixelRect:
-    left: int
-    top: int
-    width: int
-    height: int
-
-
-@dataclass(frozen=True)
-class CaptureBand:
-    label: str
-    top_ratio: float
-    height_ratio: float
-
-    def to_rect(self, window_width: int, window_height: int) -> PixelRect:
-        top = int(window_height * self.top_ratio)
-        height = max(1, int(window_height * self.height_ratio))
-        return PixelRect(left=0, top=top, width=window_width, height=height)
-
-
-@dataclass(frozen=True)
-class LightweightCapturePlan:
-    """Small horizontal bands for click targeting without full-frame screenshots."""
-
-    bands: tuple[CaptureBand, ...]
-
-    @classmethod
-    def default(cls) -> "LightweightCapturePlan":
-        return cls(
-            bands=(
-                CaptureBand(label="joker_row", top_ratio=0.10, height_ratio=0.16),
-                CaptureBand(label="shop_row", top_ratio=0.28, height_ratio=0.18),
-                CaptureBand(label="consumable_row", top_ratio=0.48, height_ratio=0.14),
-                CaptureBand(label="hand_row", top_ratio=0.70, height_ratio=0.20),
-            )
-        )
-
-    def to_rects(self, window_width: int, window_height: int) -> dict[str, PixelRect]:
-        return {
-            band.label: band.to_rect(window_width=window_width, window_height=window_height)
-            for band in self.bands
-        }
-
-
-@dataclass(frozen=True)
-class BalatroPaths:
-    root: Path = DEFAULT_BALATRO_ROOT
-    profile: int = 2
-
-    @property
-    def settings_path(self) -> Path:
-        return self.root / "settings.jkr"
-
-    @property
-    def ai_dir(self) -> Path:
-        return self.root / "ai"
-
-    @property
-    def profile_dir(self) -> Path:
-        return self.root / str(self.profile)
-
-    @property
-    def save_path(self) -> Path:
-        return self.profile_dir / "save.jkr"
-
-    @property
-    def profile_path(self) -> Path:
-        return self.profile_dir / "profile.jkr"
-
-    @property
-    def meta_path(self) -> Path:
-        return self.profile_dir / "meta.jkr"
-
-    @property
-    def live_state_path(self) -> Path:
-        return self.ai_dir / "live_state.json"
-
-    def available_profiles(self) -> tuple[int, ...]:
-        profiles: list[int] = []
-        if not self.root.exists():
-            return ()
-
-        for child in self.root.iterdir():
-            if child.is_dir() and child.name.isdigit() and (child / "save.jkr").exists():
-                profiles.append(int(child.name))
-        return tuple(sorted(profiles))
-
-
-@dataclass(frozen=True)
-class SaveSnapshot:
-    profile: int
-    save_path: Path
-    modified_at: datetime
-    raw_payload: str
-    active_payload: str
-
-
-class SavePayloadDecoder:
-    """Decode Balatro's deflated save files into Lua source text."""
-
-    _window_sizes = (
-        zlib.MAX_WBITS,
-        -zlib.MAX_WBITS,
-        zlib.MAX_WBITS | 32,
-    )
-
-    def decode_bytes(self, compressed_bytes: bytes) -> str:
-        last_error: Exception | None = None
-        for window_size in self._window_sizes:
-            try:
-                return zlib.decompress(compressed_bytes, window_size).decode("utf-8")
-            except (zlib.error, UnicodeDecodeError) as exc:
-                last_error = exc
-
-        raise ValueError("Could not decode Balatro save payload.") from last_error
-
-    def decode_file(self, path: Path) -> str:
-        return self.decode_bytes(path.read_bytes())
-
-    def extract_active_payload(self, payload: str) -> str:
-        marker = " end return "
-        if marker not in payload:
-            return payload
-
-        active_payload = payload.split(marker, 1)[1].strip()
-        if active_payload.startswith("return "):
-            return active_payload
-        return f"return {active_payload}"
-
-
-class BalatroSaveObserver:
-    """Observation layer that prefers live save files over OCR-heavy screenshots."""
-
-    def __init__(
-        self,
-        paths: BalatroPaths | None = None,
-        decoder: SavePayloadDecoder | None = None,
-        capture_plan: LightweightCapturePlan | None = None,
-    ) -> None:
-        self.paths = paths or BalatroPaths()
-        self.decoder = decoder or SavePayloadDecoder()
-        self.capture_plan = capture_plan or LightweightCapturePlan.default()
-
-    def observe(self) -> GameObservation:
-        live_observation = self.read_live_observation()
-        if live_observation is not None:
-            return live_observation
-
-        snapshot = self.read_snapshot()
-        return self._build_observation(snapshot)
-
-    def read_live_observation(self) -> GameObservation | None:
-        path = self.paths.live_state_path
-        if not path.exists():
-            return None
-
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
-
-        if not isinstance(payload, dict):
-            return None
-
-        state = payload.get("state")
-        if not isinstance(state, dict):
-            state = payload
-        if not isinstance(state, dict):
-            return None
-
-        hand_cards_payload = state.get("hand_cards")
-        hand_cards: list[ObservedCard] = []
-        if isinstance(hand_cards_payload, list):
-            for item in hand_cards_payload:
-                if not isinstance(item, dict):
-                    continue
-                modifiers = item.get("modifiers")
-                hand_cards.append(
-                    ObservedCard(
-                        area=str(item.get("area", "hand")),
-                        code=self._string_or_none(item.get("code")),
-                        name=self._string_or_none(item.get("name")),
-                        facing=self._string_or_none(item.get("facing")),
-                        enhancement=self._string_or_none(item.get("enhancement")),
-                        edition=self._string_or_none(item.get("edition")),
-                        seal=self._string_or_none(item.get("seal")),
-                        debuffed=bool(item.get("debuffed", False)),
-                        modifiers=tuple(
-                            str(value) for value in modifiers
-                        ) if isinstance(modifiers, list) else (),
-                    )
-                )
-
-        notes = state.get("notes")
-        if not isinstance(notes, list):
-            notes = []
-
-        jokers_payload = state.get("jokers")
-        jokers: list[str] = []
-        if isinstance(jokers_payload, list):
-            for item in jokers_payload:
-                if item is None:
-                    continue
-                if isinstance(item, dict):
-                    label = self._string_or_none(item.get("name")) or self._string_or_none(item.get("label"))
-                    if label:
-                        jokers.append(label)
-                    continue
-                jokers.append(str(item))
-
-        seen_at_raw = state.get("seen_at")
-        seen_at = None
-        if isinstance(seen_at_raw, str):
-            try:
-                seen_at = datetime.fromisoformat(seen_at_raw)
-            except ValueError:
-                seen_at = None
-        if seen_at is None:
-            seen_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-
-        return GameObservation(
-            phase=str(state.get("phase", state.get("state", "unknown"))),
-            money=self._int_or_zero(state.get("money")),
-            hands_left=self._int_or_zero(state.get("hands_left")),
-            discards_left=self._int_or_zero(state.get("discards_left")),
-            score_to_beat=self._int_or_zero(
-                state.get("score_to_beat", state.get("target"))
-            ),
-            current_score=self._int_or_zero(
-                state.get("current_score", state.get("score"))
-            ),
-            jokers=tuple(jokers),
-            hand_cards=tuple(hand_cards),
-            source=str(state.get("source", "live_export")),
-            state_id=self._int_or_none(state.get("state_id")),
-            blind_name=self._string_or_none(
-                state.get("blind_name", state.get("blind"))
-            ),
-            blind_key=self._string_or_none(state.get("blind_key")),
-            cards_in_hand=self._int_or_none(state.get("cards_in_hand")),
-            jokers_count=self._int_or_none(state.get("jokers_count")),
-            notes=tuple(str(value) for value in notes if value is not None),
-            seen_at=seen_at,
-        )
-
-    def read_snapshot(self) -> SaveSnapshot:
-        raw_payload = self.decoder.decode_file(self.paths.save_path)
-        modified_at = datetime.fromtimestamp(
-            self.paths.save_path.stat().st_mtime,
-            tz=timezone.utc,
-        )
-        return SaveSnapshot(
-            profile=self.paths.profile,
-            save_path=self.paths.save_path,
-            modified_at=modified_at,
-            raw_payload=raw_payload,
-            active_payload=self.decoder.extract_active_payload(raw_payload),
-        )
-
-    def _build_observation(self, snapshot: SaveSnapshot) -> GameObservation:
+class SaveObservationParser:
+    def parse_snapshot(self, snapshot: SaveSnapshot) -> GameObservation:
         payload = snapshot.active_payload
         blind_block = self._extract_block(payload, "BLIND") or ""
         game_block = self._extract_block(payload, "GAME") or ""
@@ -331,11 +66,21 @@ class BalatroSaveObserver:
             score_to_beat=score_to_beat,
             current_score=current_score,
             jokers=joker_names,
+            joker_details=tuple(ObservedJoker(name=name) for name in joker_names),
             hand_cards=hand_cards,
             source="save_file",
             state_id=state_id,
             blind_name=blind_name,
             blind_key=blind_key,
+            blind_choices=(),
+            deck_name=None,
+            deck_key=None,
+            vouchers=(),
+            consumables_inventory=(),
+            consumables_shop=(),
+            consumable_capacity=None,
+            tags=(),
+            booster_packs=(),
             cards_in_hand=cards_in_hand,
             jokers_count=jokers_count,
             notes=tuple(notes),
@@ -476,15 +221,6 @@ class BalatroSaveObserver:
         if not match:
             return None
         return int(match.group(1))
-
-    def _extract_top_level_int(self, text: str, key: str) -> int | None:
-        raw = self._extract_top_level_raw_value(text, key)
-        if raw is None:
-            return None
-        match = re.fullmatch(r"-?\d+", raw)
-        if not match:
-            return None
-        return int(raw)
 
     def _extract_bool(self, text: str, key: str) -> bool | None:
         match = re.search(rf'\["{re.escape(key)}"\]=(true|false)', text)
@@ -700,25 +436,6 @@ class BalatroSaveObserver:
     def _format_number(self, value: float | int) -> str:
         if isinstance(value, float) and value.is_integer():
             return str(int(value))
-        return str(value)
-
-    def _int_or_zero(self, value: object) -> int:
-        return self._int_or_none(value) or 0
-
-    def _int_or_none(self, value: object) -> int | None:
-        if isinstance(value, bool):
-            return int(value)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float) and value.is_integer():
-            return int(value)
-        if isinstance(value, str) and re.fullmatch(r"-?\d+", value):
-            return int(value)
-        return None
-
-    def _string_or_none(self, value: object) -> str | None:
-        if value is None:
-            return None
         return str(value)
 
     def _unescape(self, value: str) -> str:

@@ -20,6 +20,63 @@ class ObservedCard:
 
 
 @dataclass(frozen=True)
+class ObservedVoucher:
+    """Compact voucher summary exposed to policy code."""
+
+    name: str
+    key: str | None = None
+
+
+@dataclass(frozen=True)
+class ObservedConsumable:
+    """Consumable item that can be in inventory or visible in the shop."""
+
+    kind: str
+    name: str
+    key: str | None = None
+    cost: int | None = None
+
+
+@dataclass(frozen=True)
+class ObservedJoker:
+    """Gameplay-relevant joker summary for policy decisions."""
+
+    name: str
+    key: str | None = None
+    edition: str | None = None
+    debuffed: bool = False
+    modifiers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ObservedTag:
+    """Run-relevant tag summary."""
+
+    name: str
+    key: str | None = None
+
+
+@dataclass(frozen=True)
+class ObservedBoosterPack:
+    """Visible booster pack summary for shop decisions."""
+
+    name: str
+    key: str | None = None
+    kind: str | None = None
+    cost: int | None = None
+
+
+@dataclass(frozen=True)
+class ObservedBlindChoice:
+    """Blind choice available during blind selection."""
+
+    slot: str
+    key: str
+    state: str | None = None
+    tag: str | None = None
+
+
+@dataclass(frozen=True)
 class GameObservation:
     """Structured snapshot of the current game state."""
 
@@ -30,11 +87,21 @@ class GameObservation:
     score_to_beat: int
     current_score: int = 0
     jokers: tuple[str, ...] = ()
+    joker_details: tuple[ObservedJoker, ...] = ()
     hand_cards: tuple[ObservedCard, ...] = ()
     source: str = "unknown"
     state_id: int | None = None
     blind_name: str | None = None
     blind_key: str | None = None
+    blind_choices: tuple[ObservedBlindChoice, ...] = ()
+    deck_name: str | None = None
+    deck_key: str | None = None
+    vouchers: tuple[ObservedVoucher, ...] = ()
+    consumables_inventory: tuple[ObservedConsumable, ...] = ()
+    consumables_shop: tuple[ObservedConsumable, ...] = ()
+    consumable_capacity: int | None = None
+    tags: tuple[ObservedTag, ...] = ()
+    booster_packs: tuple[ObservedBoosterPack, ...] = ()
     cards_in_hand: int | None = None
     jokers_count: int | None = None
     notes: tuple[str, ...] = ()
