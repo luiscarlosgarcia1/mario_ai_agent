@@ -6,6 +6,19 @@ The current observer is good enough to prove the project direction, but it does 
 
 Right now, the agent cannot reliably reason about the full state of a run because important information is missing from observation output. Missing areas include richer joker state, the active deck being played, vouchers, consumables, booster packs, tags, and shop-visible consumables. This makes it hard to build a policy that can make strong decisions in blinds, shops, and long-run deckbuilding situations.
 
+The newest gaps are about completeness and phase accuracy rather than just field presence. The observer still misses or mislabels several gameplay-critical details:
+
+- which consumables are actually in inventory
+- the full set of currently visible shop items rather than only a partial shop snapshot
+- reroll cost in the shop
+- current ante and total round progression
+- the selected stake or difficulty for the run, not just the deck
+- whether a tag was claimed by skipping a blind
+- which packs are currently present in the shop
+- the distinction between blind select and the pack-opening or reward screen that appears after buying a pack
+
+These gaps matter because they create policy mistakes even when most of the rest of the state is present. The observer must know the full actionable shop, the current progression of the run, and the correct gameplay phase in order to support reliable decision making.
+
 The user wants the observer expansion to make the live observation layer capable of seeing and outputting the run-relevant state needed for gameplay decisions, while keeping `live_state.json` as the primary source and `save.jkr` as a fallback and debugging source.
 
 ## Solution
@@ -24,8 +37,16 @@ The expanded observer should expose:
 - booster packs that are currently relevant and visible to the run
 - currently relevant tags
 - blind type information
+- the full visible shop inventory rather than a first-item-only subset
+- shop reroll cost
+- current ante and total round progression
+- selected stake or difficulty for the run
+- whether a tag was earned from a blind skip and whether that state is still relevant
+- pack offers visible in the shop and the separate post-purchase pack interaction phase
 
 The system should prefer live exported state from the game whenever available and only fall back to save parsing when the live export is missing or unusable. The goal is not just to dump raw internal memory, but to provide a structured, gameplay-facing observation that policy code can use directly.
+
+The observer should treat shop and pack state as game-state-derived structured data, not as something that depends on screenshot-only card identification. If the game state already knows which items and packs are present, the exported observation should know them too.
 
 ## User Stories
 
@@ -47,6 +68,16 @@ The system should prefer live exported state from the game whenever available an
 16. As the Balatro agent developer, I want contract tests for the exporter and parser, so that future observer changes do not silently break policy inputs.
 17. As the Balatro agent developer, I want the observer expansion to focus on persistent run state rather than hover-only or transient UI state, so that the first version stays stable and useful.
 18. As the Balatro agent developer, I want only active and visible run-relevant state exported for vouchers, tags, packs, and consumables, so that the observation model stays focused on decisions the agent can make right now.
+19. As the Balatro agent developer, I want the observer to expose the exact consumables currently stored in inventory, so that the policy can plan around held tarot, planet, and spectral resources instead of guessing.
+20. As the Balatro agent developer, I want the observer to expose the full currently visible shop inventory, so that the policy can compare every available buy instead of only the first detected item.
+21. As the Balatro agent developer, I want the observer to expose shop reroll cost, so that the policy can weigh rerolling against buying and saving.
+22. As the Balatro agent developer, I want the observer to expose the current ante, so that the policy can make progression-aware decisions and know how close the run is to its next blind escalation.
+23. As the Balatro agent developer, I want the observer to expose the total round count of the run, so that the policy can reason about run tempo, scaling, and long-run pacing.
+24. As the Balatro agent developer, I want the observer to expose the chosen stake or difficulty for the run, so that the policy can account for rule and economy differences beyond the base deck identity.
+25. As the Balatro agent developer, I want the observer to expose whether a tag was claimed by skipping a blind, so that the policy can reason about skip outcomes and tag-driven planning.
+26. As the Balatro agent developer, I want the observer to expose which packs are currently available in the shop, so that the policy can compare pack value against jokers, consumables, and rerolls.
+27. As the Balatro agent developer, I want the observer to distinguish pack-opening and reward-selection screens from blind-select screens, so that the agent can choose cards or skip correctly after buying a pack.
+28. As the Balatro agent developer, I want the observer to expose pack interaction state in a structured way, so that the policy can understand when it is choosing rewards from a purchased pack rather than navigating the shop or blind menu.
 
 ## Implementation Decisions
 
@@ -61,7 +92,18 @@ The system should prefer live exported state from the game whenever available an
 - Joker editions or stickers should be exported when they materially affect gameplay and omitted when they are purely cosmetic.
 - Hand card output should continue to include enhancement, seal, edition, and gameplay-relevant modifiers.
 - Blind output should include structured blind identity rather than only loose display text.
+- The observation model should include run progression metadata such as ante and total rounds completed or currently being played.
+- The observation model should include chosen stake or difficulty as part of run identity, separate from deck identity.
 - Voucher, booster pack, and tag output should represent active or currently visible run-relevant state, not every historical artifact the engine may have tracked earlier in the run.
+- Shop output should include the full visible shop inventory across all relevant item types rather than a partial or first-item-only view.
+- Shop output should include reroll cost as a first-class field.
+- Pack offers visible in the shop should be exported separately and completely.
+- The live exporter should prefer direct game-state summaries for shop and pack contents rather than depending on screenshot-only card recognition.
+- The observation schema should include a phase or subphase model that distinguishes at least:
+  - blind selection
+  - normal shop browsing
+  - pack-opening or reward-claim screens after purchasing a pack
+- Skip-derived tag state should be represented in a gameplay-facing way so the policy can tell when a skip produced a tag and what that tag is.
 - Persistent game state is in scope. Hover-only, cursor-only, or other purely transient UI state is out of scope for this PRD.
 - The live exporter should remain compact and policy-oriented rather than a full raw game-memory dump.
 - The Python observer should normalize live-exported data into a stable schema that can also accept save-derived fallback data where possible.
@@ -91,6 +133,11 @@ The system should prefer live exported state from the game whenever available an
   - consumables are split correctly between inventory and shop-visible items
   - consumable kinds are preserved
   - vouchers, packs, and tags appear when active or visible
+  - shop inventory contains all visible actionable items rather than only a partial subset
+  - reroll cost is present and accurate when in the shop
+  - ante, round count, and stake are preserved
+  - skip-derived tag state is preserved
+  - pack offers and purchased-pack interaction state are distinguishable from blind select
   - fallback behavior remains safe when live export is absent or partial
 
 ## Out of Scope
@@ -107,6 +154,7 @@ The system should prefer live exported state from the game whenever available an
 - The initial goal is to expose all run-relevant state needed for strong decision making, not to expose every internal engine detail.
 - This PRD intentionally favors a compact, stable, gameplay-facing observation contract because that will make policy implementation and testing much easier.
 - If a field’s gameplay relevance is uncertain, the default rule should be: include it when it changes action quality, exclude it when it is cosmetic noise.
+- The observer should not treat game-state-known shop objects as unknown just because visual card recognition is incomplete. If the game knows what the item is, the export should identify it.
 - This PRD sets up the next likely workflow:
   - break the observer expansion into implementation issues
   - implement the schema and exporter changes in slices
