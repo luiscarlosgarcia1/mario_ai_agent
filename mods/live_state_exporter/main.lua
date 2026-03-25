@@ -19,6 +19,22 @@ local EXPORT_MAX_PACKS = 4
 local EXPORT_MAX_STRING = 80
 local unpack_fn = table.unpack or unpack
 
+local function load_signature_module()
+  local mod = rawget(_G, "SMODS") and SMODS.current_mod
+  local mod_path = mod and mod.path
+  if mod_path and rawget(_G, "NFS") and type(NFS.read) == "function" then
+    local chunk, err = load(
+      NFS.read(mod_path .. "signature.lua"),
+      '=[SMODS live_state_exporter "signature.lua"]'
+    )
+    assert(chunk, err)
+    return chunk()
+  end
+  error("live_state_exporter could not load signature.lua")
+end
+
+local Signature = load_signature_module()
+
 local function now()
   if love and love.timer and love.timer.getTime then
     return love.timer.getTime()
@@ -784,48 +800,7 @@ local function snapshot_game()
 end
 
 local function make_signature(snapshot)
-  if type(snapshot) ~= "table" then
-    return "nil"
-  end
-
-  local state = safe_table(snapshot.state) or {}
-  local parts = {
-    safe_tostring(state.phase),
-    safe_tostring(state.state_id),
-    safe_tostring(state.money),
-    safe_tostring(state.hands_left),
-    safe_tostring(state.discards_left),
-    safe_tostring(state.blind_name),
-    safe_tostring(state.blind_key),
-    safe_tostring(safe_table(state.deck) and state.deck.key),
-    safe_tostring(state.current_score),
-    safe_tostring(state.score_to_beat),
-    safe_tostring(state.cards_in_hand),
-    safe_tostring(state.jokers_count),
-    safe_tostring(state.consumable_capacity),
-  }
-
-  local function add_named_items(items, field_name)
-    local labels = {}
-    for _, item in ipairs(items or {}) do
-      if type(item) == "table" then
-        labels[#labels + 1] = safe_tostring(item[field_name])
-      else
-        labels[#labels + 1] = safe_tostring(item)
-      end
-    end
-    parts[#parts + 1] = table.concat(labels, "|")
-  end
-
-  add_named_items(state.hand_cards, "name")
-  add_named_items(state.jokers, "name")
-  add_named_items(state.vouchers, "key")
-  add_named_items(state.consumables_inventory, "key")
-  add_named_items(state.consumables_shop, "key")
-  add_named_items(state.tags, "key")
-  add_named_items(state.booster_packs, "key")
-  add_named_items(state.blind_choices, "key")
-  return table.concat(parts, "::")
+  return Signature.make(snapshot)
 end
 
 local function ensure_export_dir()
