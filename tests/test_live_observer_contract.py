@@ -533,6 +533,30 @@ class LiveObserverContractTests(unittest.TestCase):
             ],
         )
 
+    def test_observe_does_not_backfill_phase4_arrays_from_removed_aliases(self) -> None:
+        live_payload = {
+            "state": {
+                "source": "live_state_exporter",
+                "interaction_phase": "blind_select",
+                "blind_key": "bl_small",
+                "score": {"current": 0, "target": 300},
+                "money": 4,
+                "hands_left": 4,
+                "discards_left": 4,
+                "consumables_inventory": [
+                    {"kind": "Tarot", "key": "c_fool"},
+                ],
+                "blind_choices": [
+                    {"slot": "Small", "key": "bl_small", "state": "Select"},
+                ],
+            }
+        }
+
+        observation = self.observe_live_payload(live_payload)
+
+        self.assertEqual(observation["consumables"], [])
+        self.assertEqual(observation["blinds"], [])
+
     def test_format_observation_renders_from_canonical_payload(self) -> None:
         observation = {
             "source": "live_state_exporter",

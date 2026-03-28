@@ -52,12 +52,10 @@ class LiveObservationParser:
         if not isinstance(score_payload, dict):
             score_payload = {}
 
-        blinds = self._parse_live_blinds(state.get("blinds", state.get("blind_choices")))
+        blinds = self._parse_live_blinds(state.get("blinds"))
         vouchers = self._parse_live_vouchers(state.get("vouchers"))
         shop_vouchers = self._parse_live_vouchers(state.get("shop_vouchers"))
-        consumables = self._parse_live_consumables(
-            state.get("consumables", state.get("consumables_inventory"))
-        )
+        consumables = self._parse_live_consumables(state.get("consumables"))
         shop_items = self._parse_live_shop_items(state.get("shop_items"))
         tags = self._parse_live_tags(state.get("tags"))
         skip_tags = self._parse_live_skip_tags(state.get("skip_tags"))

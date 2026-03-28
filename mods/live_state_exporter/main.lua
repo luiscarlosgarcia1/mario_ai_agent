@@ -814,17 +814,17 @@ local function collect_booster_packs(game, root)
   return result
 end
 
-local function collect_blind_choices(game)
+local function collect_blinds(game)
   local result = {}
   local round_resets = safe_table(game.round_resets) or {}
-  local blind_choices = safe_table(round_resets.blind_choices) or {}
+  local blind_keys_by_slot = safe_table(round_resets.blind_choices) or {}
   local blind_states = safe_table(round_resets.blind_states) or {}
   local blind_tags = safe_table(round_resets.blind_tags) or {}
   local slot_order = { "Small", "Big", "Boss" }
   local seen = {}
 
   for _, slot in ipairs(slot_order) do
-    local key = safe_tostring(blind_choices[slot])
+    local key = safe_tostring(blind_keys_by_slot[slot])
     if key then
       local state = safe_tostring(blind_states[slot])
       local tag_key = safe_tostring(blind_tags[slot])
@@ -839,7 +839,7 @@ local function collect_blind_choices(game)
     end
   end
 
-  for slot, key in pairs(blind_choices) do
+  for slot, key in pairs(blind_keys_by_slot) do
     if not seen[slot] then
       local state = safe_tostring(blind_states[slot])
       local tag_key = safe_tostring(blind_tags[slot])
@@ -1018,15 +1018,15 @@ local function collect_shop_items(root)
   return result
 end
 
-local function collect_skip_tags(blind_choices)
+local function collect_skip_tags(blinds)
   local result = {}
-  for _, blind_choice in ipairs(blind_choices or {}) do
-    if blind_choice.tag_key then
+  for _, blind in ipairs(blinds or {}) do
+    if blind.tag_key then
       local summary = {
-        slot = normalize_token(blind_choice.slot),
-        key = normalize_token(blind_choice.tag_key),
+        slot = normalize_token(blind.slot),
+        key = normalize_token(blind.tag_key),
       }
-      if blind_choice.tag_claimed then
+      if blind.tag_claimed then
         summary.claimed = true
       end
       result[#result + 1] = summary
@@ -1255,7 +1255,7 @@ local function snapshot_game()
   local consumeables_area = first_non_nil(root and rawget(root, "consumeables"), root and rawget(root, "consumables"))
   local jokers_area = safe_table(root and rawget(root, "jokers"))
   local hand_area = safe_table(root and rawget(root, "hand"))
-  local consumables_inventory = collect_consumables_from_area(consumeables_area, EXPORT_MAX_CONSUMABLES)
+  local consumables = collect_consumables_from_area(consumeables_area, EXPORT_MAX_CONSUMABLES)
   local shop_items = collect_shop_items(root)
   local shop_vouchers = collect_shop_vouchers(root)
   local deck = summarize_deck(game)
@@ -1263,8 +1263,8 @@ local function snapshot_game()
   local vouchers = collect_used_vouchers(game, root)
   local tags = collect_tags(game, root)
   local booster_packs = collect_booster_packs(game, root)
-  local blind_choices = collect_blind_choices(game)
-  local skip_tags = collect_skip_tags(blind_choices)
+  local blinds = collect_blinds(game)
+  local skip_tags = collect_skip_tags(blinds)
   local selected_cards = collect_selected_cards(root)
   local highlighted_card = collect_highlighted_card(root)
   local shop_discounts = collect_shop_discounts(game)
@@ -1308,8 +1308,8 @@ local function snapshot_game()
       inflation = safe_number(game.inflation),
       shop_discounts = shop_discounts,
       reroll_cost = safe_number(current_round.reroll_cost),
-      blind_key = BlindKey.derive(interaction_phase, blind_choices),
-      blinds = blind_choices,
+      blind_key = BlindKey.derive(interaction_phase, blinds),
+      blinds = blinds,
       deck_key = deck and deck.key or nil,
       deck_cards = deck_cards,
       cards_in_deck = deck_cards,
@@ -1324,7 +1324,7 @@ local function snapshot_game()
       jokers = jokers,
       hand_cards = hand_cards,
       shop_cards = shop_cards,
-      consumables = consumables_inventory,
+      consumables = consumables,
       skip_tags = skip_tags,
       shop_items = shop_items,
       selected_cards = selected_cards,
