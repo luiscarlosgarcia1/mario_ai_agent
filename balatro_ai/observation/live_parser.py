@@ -40,12 +40,9 @@ class LiveObservationParser:
         if not isinstance(notes, list):
             notes = []
 
-        deck_payload = state.get("deck")
-        deck_name = None
-        deck_key = None
-        if isinstance(deck_payload, dict):
-            deck_name = self._string_or_none(deck_payload.get("name"))
-            deck_key = self._string_or_none(deck_payload.get("key"))
+        score_payload = state.get("score")
+        if not isinstance(score_payload, dict):
+            score_payload = {}
 
         blind_choices = self._parse_live_blind_choices(state.get("blinds", state.get("blind_choices")))
         vouchers = self._parse_live_vouchers(state.get("vouchers"))
@@ -72,40 +69,38 @@ class LiveObservationParser:
             seen_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
 
         return GameObservation(
-            phase=str(state.get("interaction_phase", state.get("state", "unknown"))),
+            interaction_phase=self._string_or_none(state.get("interaction_phase")) or "unknown",
             money=self._int_or_zero(state.get("money")),
             hands_left=self._int_or_zero(state.get("hands_left")),
             discards_left=self._int_or_zero(state.get("discards_left")),
-            score_to_beat=self._int_or_zero(state.get("score_to_beat", state.get("target"))),
-            current_score=self._int_or_zero(state.get("current_score", state.get("score"))),
+            score_current=self._int_or_none(score_payload.get("current")),
+            score_target=self._int_or_none(score_payload.get("target")),
             jokers=tuple(jokers),
             joker_details=tuple(joker_details),
             hand_cards=tuple(hand_cards),
             source=str(state.get("source", "live_export")),
             state_id=self._int_or_none(state.get("state_id")),
+            blind_key=self._string_or_none(state.get("blind_key")),
+            deck_key=self._string_or_none(state.get("deck_key")),
+            stake_id=state.get("stake_id"),
             ante=self._int_or_none(state.get("ante")),
             round_count=self._int_or_none(state.get("round_count", state.get("round_number"))),
-            stake=self._string_or_none(state.get("stake_id", state.get("stake", state.get("difficulty")))),
-            blind_name=self._string_or_none(state.get("blind_name", state.get("blind"))),
-            blind_key=self._string_or_none(state.get("blind_key")),
             blind_choices=tuple(blind_choices),
-            deck_name=deck_name,
-            deck_key=deck_key,
+            joker_slots=self._int_or_none(state.get("joker_slots")),
+            joker_count=self._int_or_none(state.get("joker_count")),
             vouchers=tuple(vouchers),
             consumables_inventory=tuple(consumables_inventory),
             consumables_shop=tuple(consumables_shop),
-            consumable_capacity=self._int_or_none(
-                state.get("consumable_slots", state.get("consumable_capacity"))
-            ),
+            consumable_slots=self._int_or_none(state.get("consumable_slots")),
             reroll_cost=self._int_or_none(state.get("reroll_cost")),
+            interest=self._int_or_none(state.get("interest")),
+            inflation=self._int_or_none(state.get("inflation")),
+            hand_size=self._int_or_none(state.get("hand_size")),
             shop_items=tuple(shop_items),
             tags=tuple(tags),
             booster_packs=tuple(booster_packs),
             skip_tag_claimed=skip_tag_claimed,
             skip_tag=skip_tag,
-            interaction_phase=self._string_or_none(state.get("interaction_phase")),
-            cards_in_hand=self._int_or_none(state.get("cards_in_hand")),
-            jokers_count=self._int_or_none(state.get("jokers_count")),
             notes=tuple(str(value) for value in notes if value is not None),
             seen_at=seen_at,
         )

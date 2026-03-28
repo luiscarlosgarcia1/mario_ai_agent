@@ -94,44 +94,43 @@ class ObservedBlindChoice:
 class GameObservation:
     """Structured snapshot of the current game state.
 
-    Transitional legacy bridge: this still carries several legacy/pre-canonical
-    fields so the parsers can ingest today's exporter/save shapes. Public callers
-    should use the canonical payload returned by `BalatroSaveObserver.observe()`
-    instead, and later phases should shrink this model as legacy bridges are removed.
+    Transitional legacy bridge: later phases will keep shrinking the object-model
+    side of cards, shop, and blind details, but the scalar backbone already follows
+    the canonical observer contract.
     """
 
-    phase: str
+    interaction_phase: str
     money: int
     hands_left: int
     discards_left: int
-    score_to_beat: int
-    current_score: int = 0
+    score_current: int | None = None
+    score_target: int | None = None
     jokers: tuple[str, ...] = ()
     joker_details: tuple[ObservedJoker, ...] = ()
     hand_cards: tuple[ObservedCard, ...] = ()
     source: str = "unknown"
     state_id: int | None = None
+    blind_key: str | None = None
+    deck_key: str | None = None
+    stake_id: str | int | None = None
     ante: int | None = None
     round_count: int | None = None
-    stake: str | None = None
-    blind_name: str | None = None
-    blind_key: str | None = None
     blind_choices: tuple[ObservedBlindChoice, ...] = ()
-    deck_name: str | None = None
-    deck_key: str | None = None
+    joker_slots: int | None = None
+    joker_count: int | None = None
     vouchers: tuple[ObservedVoucher, ...] = ()
     consumables_inventory: tuple[ObservedConsumable, ...] = ()
     consumables_shop: tuple[ObservedConsumable, ...] = ()
-    consumable_capacity: int | None = None
+    consumable_slots: int | None = None
     reroll_cost: int | None = None
+    interest: int | None = None
+    inflation: int | None = None
+    hand_size: int | None = None
     shop_items: tuple[ObservedShopItem, ...] = ()
     tags: tuple[ObservedTag, ...] = ()
     booster_packs: tuple[ObservedBoosterPack, ...] = ()
     skip_tag_claimed: bool = False
     skip_tag: ObservedTag | None = None
-    interaction_phase: str | None = None
-    cards_in_hand: int | None = None
-    jokers_count: int | None = None
     notes: tuple[str, ...] = ()
     seen_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 

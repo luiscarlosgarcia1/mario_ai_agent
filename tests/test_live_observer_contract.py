@@ -73,16 +73,15 @@ class LiveObserverContractTests(unittest.TestCase):
                 "source": "live_state_exporter",
                 "interaction_phase": "shop",
                 "state_id": 41,
+                "score": {
+                    "current": 75,
+                    "target": 300,
+                },
                 "money": 10,
                 "hands_left": 4,
                 "discards_left": 2,
-                "score_to_beat": 300,
-                "current_score": 75,
                 "blind_key": "bl_small",
-                "deck": {
-                    "name": "Erratic Deck",
-                    "key": "b_erratic",
-                },
+                "deck_key": "b_erratic",
             }
         }
 
@@ -109,15 +108,22 @@ class LiveObserverContractTests(unittest.TestCase):
             "state": {
                 "source": "live_state_exporter",
                 "interaction_phase": "shop",
+                "score": {
+                    "current": 150,
+                    "target": 800,
+                },
                 "money": 14,
                 "hands_left": 4,
                 "discards_left": 2,
-                "score_to_beat": 800,
-                "current_score": 150,
                 "ante": 3,
                 "round_count": 17,
                 "stake_id": "gold_stake",
+                "joker_slots": 5,
+                "joker_count": 1,
                 "reroll_cost": 5,
+                "interest": 3,
+                "inflation": 2,
+                "hand_size": 8,
                 "vouchers": [
                     {
                         "name": "Clearance Sale",
@@ -188,14 +194,20 @@ class LiveObserverContractTests(unittest.TestCase):
                         "tag": "tag_economy",
                     }
                 ],
+                "notes": ["exporter=live_state_exporter", "screenshot_status=true"],
             }
         }
 
         observation = self.observe_live_payload(live_payload)
 
         self.assertEqual(observation["stake_id"], "gold_stake")
+        self.assertEqual(observation["joker_slots"], 5)
         self.assertEqual(observation["consumable_slots"], 2)
         self.assertEqual(observation["joker_count"], 1)
+        self.assertEqual(observation["hand_size"], 8)
+        self.assertEqual(observation["interest"], 3)
+        self.assertEqual(observation["inflation"], 2)
+        self.assertEqual(observation["reroll_cost"], 5)
         self.assertEqual(observation["vouchers"][0]["key"], "v_clearance_sale")
         self.assertEqual(observation["consumables"][0]["kind"], "tarot")
         self.assertEqual(observation["consumables"][0]["name"], "The Fool")
@@ -212,17 +224,66 @@ class LiveObserverContractTests(unittest.TestCase):
         self.assertEqual(observation["shop_items"][1]["kind"], "consumable")
         self.assertEqual(observation["shop_items"][2]["kind"], "pack")
         self.assertEqual(observation["shop_items"][2]["key"], "p_arcana_normal_1")
+        self.assertIn("screenshot_status=true", observation["notes"])
+        self.assertTrue(any(note.startswith("seen_at=") for note in observation["notes"]))
+
+    def test_observe_accepts_canonical_scalar_live_payload_without_legacy_aliases(self) -> None:
+        live_payload = {
+            "state": {
+                "source": "live_state_exporter",
+                "interaction_phase": "shop",
+                "state_id": 12,
+                "blind_key": "bl_small",
+                "deck_key": "b_erratic",
+                "stake_id": 5,
+                "score": {
+                    "current": 150,
+                    "target": 600,
+                },
+                "money": 11,
+                "hands_left": 3,
+                "discards_left": 1,
+                "ante": 4,
+                "round_count": 18,
+                "joker_slots": 5,
+                "joker_count": 2,
+                "consumable_slots": 2,
+                "reroll_cost": 6,
+                "interest": 4,
+                "inflation": 1,
+                "hand_size": 8,
+                "notes": ["exporter=live_state_exporter", "screenshot_status=true"],
+            }
+        }
+
+        observation = self.observe_live_payload(live_payload)
+
+        self.assertEqual(observation["state_id"], 12)
+        self.assertEqual(observation["blind_key"], "bl_small")
+        self.assertEqual(observation["deck_key"], "b_erratic")
+        self.assertEqual(observation["stake_id"], 5)
+        self.assertEqual(observation["score"], {"current": 150, "target": 600})
+        self.assertEqual(observation["joker_slots"], 5)
+        self.assertEqual(observation["joker_count"], 2)
+        self.assertEqual(observation["consumable_slots"], 2)
+        self.assertEqual(observation["interest"], 4)
+        self.assertEqual(observation["inflation"], 1)
+        self.assertEqual(observation["hand_size"], 8)
+        self.assertIn("screenshot_status=true", observation["notes"])
+        self.assertTrue(FORBIDDEN_LEGACY_KEYS.isdisjoint(observation.keys()))
 
     def test_observe_keeps_live_shop_packs_only_in_shop_items(self) -> None:
         live_payload = {
             "state": {
                 "source": "live_state_exporter",
                 "interaction_phase": "shop",
+                "score": {
+                    "current": 75,
+                    "target": 300,
+                },
                 "money": 10,
                 "hands_left": 4,
                 "discards_left": 2,
-                "score_to_beat": 300,
-                "current_score": 75,
                 "shop_items": [
                     {
                         "kind": "Joker",
@@ -262,11 +323,13 @@ class LiveObserverContractTests(unittest.TestCase):
             "state": {
                 "source": "live_state_exporter",
                 "interaction_phase": "shop",
+                "score": {
+                    "current": 75,
+                    "target": 300,
+                },
                 "money": 10,
                 "hands_left": 4,
                 "discards_left": 2,
-                "score_to_beat": 300,
-                "current_score": 75,
                 "shop_items": [
                     {
                         "kind": "Pack",
@@ -307,11 +370,10 @@ class LiveObserverContractTests(unittest.TestCase):
                 "state": {
                     "source": "live_state_exporter",
                     "interaction_phase": "blind_select",
+                    "score": {"current": 0, "target": 300},
                     "money": 8,
                     "hands_left": 4,
                     "discards_left": 4,
-                    "score_to_beat": 300,
-                    "current_score": 0,
                 }
             }
         )
@@ -320,11 +382,10 @@ class LiveObserverContractTests(unittest.TestCase):
                 "state": {
                     "source": "live_state_exporter",
                     "interaction_phase": "play_hand",
+                    "score": {"current": 120, "target": 300},
                     "money": 8,
                     "hands_left": 4,
                     "discards_left": 4,
-                    "score_to_beat": 300,
-                    "current_score": 120,
                 }
             }
         )
@@ -336,11 +397,10 @@ class LiveObserverContractTests(unittest.TestCase):
                     "pack_contents": {
                         "open_pack_kind": "tarot",
                     },
+                    "score": {"current": 0, "target": 300},
                     "money": 8,
                     "hands_left": 4,
                     "discards_left": 4,
-                    "score_to_beat": 300,
-                    "current_score": 0,
                 }
             }
         )
@@ -349,6 +409,64 @@ class LiveObserverContractTests(unittest.TestCase):
         self.assertEqual(play_hand["interaction_phase"], "play_hand")
         self.assertEqual(pack_reward["interaction_phase"], "pack_reward")
         self.assertIsNone(pack_reward["pack_contents"])
+
+    def test_observe_preserves_phase_specific_blind_key_from_live_payload(self) -> None:
+        blind_select = self.observe_live_payload(
+            {
+                "state": {
+                    "source": "live_state_exporter",
+                    "interaction_phase": "blind_select",
+                    "blind_key": "bl_small",
+                    "score": {"current": 0, "target": 0},
+                    "money": 4,
+                    "hands_left": 4,
+                    "discards_left": 4,
+                    "blinds": [
+                        {"slot": "Small", "key": "bl_small", "state": "Select"},
+                        {"slot": "Big", "key": "bl_big", "state": "Upcoming"},
+                    ],
+                }
+            }
+        )
+        play_hand = self.observe_live_payload(
+            {
+                "state": {
+                    "source": "live_state_exporter",
+                    "interaction_phase": "play_hand",
+                    "blind_key": "bl_big",
+                    "score": {"current": 120, "target": 450},
+                    "money": 6,
+                    "hands_left": 4,
+                    "discards_left": 4,
+                    "blinds": [
+                        {"slot": "Small", "key": "bl_small", "state": "Defeated"},
+                        {"slot": "Big", "key": "bl_big", "state": "Current"},
+                    ],
+                }
+            }
+        )
+        shop = self.observe_live_payload(
+            {
+                "state": {
+                    "source": "live_state_exporter",
+                    "interaction_phase": "shop",
+                    "blind_key": "bl_big",
+                    "score": {"current": 0, "target": 0},
+                    "money": 5,
+                    "hands_left": 4,
+                    "discards_left": 4,
+                    "blinds": [
+                        {"slot": "Small", "key": "bl_small", "state": "Defeated"},
+                        {"slot": "Big", "key": "bl_big", "state": "Upcoming"},
+                        {"slot": "Boss", "key": "bl_head", "state": "Upcoming"},
+                    ],
+                }
+            }
+        )
+
+        self.assertEqual(blind_select["blind_key"], "bl_small")
+        self.assertEqual(play_hand["blind_key"], "bl_big")
+        self.assertEqual(shop["blind_key"], "bl_big")
 
     def test_format_observation_renders_from_canonical_payload(self) -> None:
         observation = {
@@ -364,7 +482,7 @@ class LiveObserverContractTests(unittest.TestCase):
             "discards_left": 2,
             "ante": 3,
             "round_count": 17,
-            "joker_slots": None,
+            "joker_slots": 5,
             "joker_count": 1,
             "jokers": [
                 {
@@ -391,10 +509,10 @@ class LiveObserverContractTests(unittest.TestCase):
             ],
             "shop_discounts": [],
             "reroll_cost": 5,
-            "interest": None,
-            "inflation": None,
+            "interest": 3,
+            "inflation": 2,
             "pack_contents": None,
-            "hand_size": None,
+            "hand_size": 8,
             "cards_in_hand": [
                 {
                     "card_key": "s_a",
@@ -414,6 +532,10 @@ class LiveObserverContractTests(unittest.TestCase):
         self.assertIn("interaction_phase: shop", formatted)
         self.assertIn("score: 150/800", formatted)
         self.assertIn("stake_id: gold_stake", formatted)
+        self.assertIn("joker_slots: 5", formatted)
+        self.assertIn("interest: 3", formatted)
+        self.assertIn("inflation: 2", formatted)
+        self.assertIn("hand_size: 8", formatted)
         self.assertIn("consumables:", formatted)
         self.assertIn("shop_items:", formatted)
         self.assertIn("cards_in_hand:", formatted)
@@ -427,11 +549,13 @@ class LiveObserverContractTests(unittest.TestCase):
             "state": {
                 "source": "live_state_exporter",
                 "interaction_phase": "shop",
+                "score": {
+                    "current": 75,
+                    "target": 300,
+                },
                 "money": 10,
                 "hands_left": 4,
                 "discards_left": 2,
-                "score_to_beat": 300,
-                "current_score": 75,
                 "shop_items": [
                     {
                         "kind": "Pack",

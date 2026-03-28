@@ -20,8 +20,6 @@ class SaveObservationParser:
         pseudorandom_block = self._extract_block(game_block, "pseudorandom") or ""
 
         state_id = self._extract_int(payload, "STATE")
-        # Transitional legacy bridge: these fields should stop being carried once
-        # the save path can populate canonical raw-id-first structures directly.
         blind_name = self._extract_top_level_string(blind_block, "name") or self._extract_string(blind_block, "name")
         blind_key = self._extract_top_level_string(blind_block, "config_blind") or self._extract_string(blind_block, "config_blind")
         money = self._extract_top_level_big_number(game_block, "dollars")
@@ -29,14 +27,19 @@ class SaveObservationParser:
             money = self._extract_big_number(game_block, "dollars") or 0
         hands_left = self._extract_int(current_round_block, "hands_left")
         discards_left = self._extract_int(current_round_block, "discards_left")
-        score_to_beat = self._extract_top_level_big_number(blind_block, "chips")
-        if score_to_beat is None:
-            score_to_beat = self._extract_big_number(blind_block, "chips") or 0
-        current_score = self._extract_top_level_big_number(game_block, "chips")
-        if current_score is None:
-            current_score = self._extract_big_number(game_block, "chips") or 0
+        score_target = self._extract_top_level_big_number(blind_block, "chips")
+        if score_target is None:
+            score_target = self._extract_big_number(blind_block, "chips")
+        score_current = self._extract_top_level_big_number(game_block, "chips")
+        if score_current is None:
+            score_current = self._extract_big_number(game_block, "chips")
+        ante = self._extract_int(round_resets_block, "ante")
+        round_count = self._extract_int(game_block, "round")
+        stake_id = self._extract_int(game_block, "stake")
+        interest = self._extract_int(game_block, "interest_amount")
+        inflation = self._extract_int(game_block, "inflation")
         cards_in_hand = self._extract_area_card_count(card_areas_block, "hand")
-        jokers_count = self._extract_area_card_count(card_areas_block, "jokers")
+        joker_count = self._extract_area_card_count(card_areas_block, "jokers")
         seed = self._extract_string(pseudorandom_block, "seed")
         blind_in_progress = self._extract_top_level_bool(blind_block, "in_blind")
         if blind_in_progress is None:
@@ -45,9 +48,7 @@ class SaveObservationParser:
         joker_names = self._extract_area_labels(card_areas_block, "jokers")
         hand_cards = self._extract_area_cards(card_areas_block, "hand")
 
-        # Transitional legacy bridge: save fallback still infers main gameplay
-        # state into the legacy internal `phase` field.
-        phase = self._infer_phase(
+        interaction_phase = self._infer_phase(
             state_id=state_id,
             blind_in_progress=blind_in_progress,
             blind_on_deck=blind_on_deck,
@@ -62,34 +63,37 @@ class SaveObservationParser:
             notes.append(f"seed={seed}")
         if cards_in_hand is not None:
             notes.append(f"cards_in_hand={cards_in_hand}")
-        if jokers_count is not None:
-            notes.append(f"jokers_count={jokers_count}")
+        if joker_count is not None:
+            notes.append(f"jokers_count={joker_count}")
 
         return GameObservation(
-            phase=phase,
+            interaction_phase=interaction_phase,
             money=money,
             hands_left=hands_left or self._extract_int(round_resets_block, "hands") or 0,
             discards_left=discards_left or self._extract_int(round_resets_block, "discards") or 0,
-            score_to_beat=score_to_beat,
-            current_score=current_score,
+            score_current=score_current,
+            score_target=score_target,
             jokers=joker_names,
             joker_details=tuple(ObservedJoker(name=name) for name in joker_names),
             hand_cards=hand_cards,
             source="save_file",
             state_id=state_id,
-            blind_name=blind_name,
             blind_key=blind_key,
+            stake_id=stake_id,
+            ante=ante,
+            round_count=round_count,
             blind_choices=(),
-            deck_name=None,
-            deck_key=None,
             vouchers=(),
             consumables_inventory=(),
             consumables_shop=(),
-            consumable_capacity=None,
+            consumable_slots=None,
+            reroll_cost=None,
+            interest=interest,
+            inflation=inflation,
+            hand_size=None,
             tags=(),
             booster_packs=(),
-            cards_in_hand=cards_in_hand,
-            jokers_count=jokers_count,
+            joker_count=joker_count,
             notes=tuple(notes),
             seen_at=snapshot.modified_at,
         )

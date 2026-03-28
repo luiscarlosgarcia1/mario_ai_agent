@@ -53,12 +53,7 @@ CANONICAL_TOP_LEVEL_KEYS = (
     "notes",
 )
 
-_CANONICAL_PHASES = {"shop", "blind_select", "play_hand", "pack_reward"}
-
-
 def serialize_observation(observation: GameObservation) -> dict[str, Any]:
-    # Transitional legacy bridge: the internal GameObservation shape is still legacy-oriented in places.
-    # This serializer is the only public rewrite point until later phases remove those legacy fields.
     serialized_jokers = _serialize_jokers(observation)
     serialized_consumables = [
         _serialize_consumable(consumable) for consumable in observation.consumables_inventory
@@ -74,23 +69,23 @@ def serialize_observation(observation: GameObservation) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "source": observation.source,
         "state_id": observation.state_id,
-        "interaction_phase": _canonical_interaction_phase(observation),
+        "interaction_phase": _normalize_machine_value(observation.interaction_phase),
         "blind_key": _normalize_machine_value(observation.blind_key),
         "deck_key": _normalize_machine_value(observation.deck_key),
-        "stake_id": _normalize_machine_value(observation.stake),
+        "stake_id": _normalize_machine_value(observation.stake_id),
         "score": {
-            "current": observation.current_score,
-            "target": observation.score_to_beat,
+            "current": observation.score_current,
+            "target": observation.score_target,
         },
         "money": observation.money,
         "hands_left": observation.hands_left,
         "discards_left": observation.discards_left,
         "ante": observation.ante,
         "round_count": observation.round_count,
-        "joker_slots": None,
-        "joker_count": observation.jokers_count if observation.jokers_count is not None else len(serialized_jokers),
+        "joker_slots": observation.joker_slots,
+        "joker_count": observation.joker_count if observation.joker_count is not None else len(serialized_jokers),
         "jokers": serialized_jokers,
-        "consumable_slots": observation.consumable_capacity,
+        "consumable_slots": observation.consumable_slots,
         "consumables": serialized_consumables,
         "shop_vouchers": [],
         "vouchers": serialized_vouchers,
@@ -99,10 +94,10 @@ def serialize_observation(observation: GameObservation) -> dict[str, Any]:
         "shop_items": _serialize_shop_items(observation),
         "shop_discounts": [],
         "reroll_cost": observation.reroll_cost,
-        "interest": None,
-        "inflation": None,
+        "interest": observation.interest,
+        "inflation": observation.inflation,
         "pack_contents": None,
-        "hand_size": None,
+        "hand_size": observation.hand_size,
         "cards_in_hand": serialized_cards_in_hand,
         "selected_cards": [],
         "highlighted_card": None,
@@ -211,20 +206,6 @@ def _serialize_notes(notes: tuple[str, ...], seen_at: datetime | None) -> list[s
     if seen_at is not None:
         values.append(f"seen_at={seen_at.isoformat()}")
     return values
-
-
-def _canonical_interaction_phase(observation: GameObservation) -> str | None:
-    primary = _normalize_machine_value(observation.interaction_phase)
-    phase = _normalize_machine_value(observation.phase)
-    # Transitional legacy bridge: legacy inputs still carry the main gameplay state in `phase`.
-    # Keep rewriting it here until parsers/exporter stop producing that field.
-    if primary in _CANONICAL_PHASES:
-        return primary
-    if phase in _CANONICAL_PHASES:
-        return phase
-    if phase is not None:
-        return phase
-    return primary
 
 
 def _normalize_machine_value(value: object) -> Any:
