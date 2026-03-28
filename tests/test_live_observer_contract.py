@@ -410,6 +410,64 @@ class LiveObserverContractTests(unittest.TestCase):
         self.assertEqual(pack_reward["interaction_phase"], "pack_reward")
         self.assertIsNone(pack_reward["pack_contents"])
 
+    def test_observe_preserves_phase_specific_blind_key_from_live_payload(self) -> None:
+        blind_select = self.observe_live_payload(
+            {
+                "state": {
+                    "source": "live_state_exporter",
+                    "interaction_phase": "blind_select",
+                    "blind_key": "bl_small",
+                    "score": {"current": 0, "target": 0},
+                    "money": 4,
+                    "hands_left": 4,
+                    "discards_left": 4,
+                    "blinds": [
+                        {"slot": "Small", "key": "bl_small", "state": "Select"},
+                        {"slot": "Big", "key": "bl_big", "state": "Upcoming"},
+                    ],
+                }
+            }
+        )
+        play_hand = self.observe_live_payload(
+            {
+                "state": {
+                    "source": "live_state_exporter",
+                    "interaction_phase": "play_hand",
+                    "blind_key": "bl_big",
+                    "score": {"current": 120, "target": 450},
+                    "money": 6,
+                    "hands_left": 4,
+                    "discards_left": 4,
+                    "blinds": [
+                        {"slot": "Small", "key": "bl_small", "state": "Defeated"},
+                        {"slot": "Big", "key": "bl_big", "state": "Current"},
+                    ],
+                }
+            }
+        )
+        shop = self.observe_live_payload(
+            {
+                "state": {
+                    "source": "live_state_exporter",
+                    "interaction_phase": "shop",
+                    "blind_key": "bl_big",
+                    "score": {"current": 0, "target": 0},
+                    "money": 5,
+                    "hands_left": 4,
+                    "discards_left": 4,
+                    "blinds": [
+                        {"slot": "Small", "key": "bl_small", "state": "Defeated"},
+                        {"slot": "Big", "key": "bl_big", "state": "Upcoming"},
+                        {"slot": "Boss", "key": "bl_head", "state": "Upcoming"},
+                    ],
+                }
+            }
+        )
+
+        self.assertEqual(blind_select["blind_key"], "bl_small")
+        self.assertEqual(play_hand["blind_key"], "bl_big")
+        self.assertEqual(shop["blind_key"], "bl_big")
+
     def test_format_observation_renders_from_canonical_payload(self) -> None:
         observation = {
             "source": "live_state_exporter",

@@ -22,21 +22,22 @@ local EXPORT_MAX_PACK_REWARD_CARDS = 16
 local EXPORT_MAX_STRING = 80
 local unpack_fn = table.unpack or unpack
 
-local function load_signature_module()
+local function load_module(filename)
   local mod = rawget(_G, "SMODS") and SMODS.current_mod
   local mod_path = mod and mod.path
   if mod_path and rawget(_G, "NFS") and type(NFS.read) == "function" then
     local chunk, err = load(
-      NFS.read(mod_path .. "signature.lua"),
-      '=[SMODS live_state_exporter "signature.lua"]'
+      NFS.read(mod_path .. filename),
+      '=[SMODS live_state_exporter "' .. filename .. '"]'
     )
     assert(chunk, err)
     return chunk()
   end
-  error("live_state_exporter could not load signature.lua")
+  error("live_state_exporter could not load " .. filename)
 end
 
-local Signature = load_signature_module()
+local Signature = load_module("signature.lua")
+local BlindKey = load_module("blind_key.lua")
 
 local function now()
   if love and love.timer and love.timer.getTime then
@@ -1311,7 +1312,7 @@ local function snapshot_game()
       inflation = safe_number(game.inflation),
       shop_discounts = shop_discounts,
       reroll_cost = safe_number(current_round.reroll_cost),
-      blind_key = safe_tostring(first_non_nil(blind.config_blind, blind.key, game.blind_key)),
+      blind_key = BlindKey.derive(interaction_phase, blind_choices),
       blinds = blind_choices,
       deck_key = deck and deck.key or nil,
       deck_cards = deck_cards,
