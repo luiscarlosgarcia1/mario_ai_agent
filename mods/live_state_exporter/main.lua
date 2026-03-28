@@ -1271,7 +1271,7 @@ local function snapshot_game()
   local selected_cards = collect_selected_cards(root)
   local highlighted_card = collect_highlighted_card(root)
   local shop_discounts = collect_shop_discounts(game)
-  local consumable_capacity = safe_number(first_non_nil(
+  local consumable_slots = safe_number(first_non_nil(
     safe_table(consumeables_area) and safe_table(consumeables_area.config) and consumeables_area.config.card_limit,
     safe_table(consumeables_area) and safe_table(consumeables_area.config) and consumeables_area.config.temp_limit,
     safe_table(game.starting_params) and game.starting_params.consumable_slots
@@ -1301,30 +1301,29 @@ local function snapshot_game()
       ante = safe_number(round_resets.ante),
       round_count = safe_number(game.round),
       stake_id = stake and first_non_nil(stake.key, stake.index) or nil,
-      stake_key = stake and stake.key or nil,
-      stake_index = stake and stake.index or nil,
       money = safe_number(first_non_nil(game.dollars, game.money)),
       hands_left = safe_number(first_non_nil(current_round.hands_left, round_resets.hands, game.hands_left, game.hands)),
       discards_left = safe_number(first_non_nil(current_round.discards_left, round_resets.discards, game.discards_left, game.discards)),
       joker_slots = joker_slots,
-      consumable_slots = consumable_capacity,
+      consumable_slots = consumable_slots,
       hand_size = hand_size,
       interest = safe_number(game.interest_amount),
       inflation = safe_number(game.inflation),
       shop_discounts = shop_discounts,
       reroll_cost = safe_number(current_round.reroll_cost),
-      blind_name = safe_tostring(first_non_nil(blind.name, game.blind_name)),
       blind_key = safe_tostring(first_non_nil(blind.config_blind, blind.key, game.blind_key)),
       blinds = blind_choices,
-      deck = deck,
+      deck_key = deck and deck.key or nil,
       deck_cards = deck_cards,
       cards_in_deck = deck_cards,
       shop_vouchers = shop_vouchers,
       vouchers = vouchers,
-      current_score = safe_number(first_non_nil(game.chips, game.current_round_score, game.score)),
-      score_to_beat = safe_number(first_non_nil(blind.chips, game.score_to_beat, game.target_score)),
+      score = {
+        current = safe_number(first_non_nil(game.chips, game.current_round_score, game.score)),
+        target = safe_number(first_non_nil(blind.chips, game.score_to_beat, game.target_score)),
+      },
       cards_in_hand = hand_count,
-      jokers_count = joker_count,
+      joker_count = joker_count,
       jokers = jokers,
       hand_cards = hand_cards,
       shop_cards = shop_cards,

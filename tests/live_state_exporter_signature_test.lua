@@ -17,8 +17,11 @@ local function test_missing_scalar_fields_still_produce_signature()
     state = {
       interaction_phase = "shop",
       money = 4,
-      blind_name = "Small Blind",
       blind_key = "bl_small",
+      score = {
+        current = 12,
+        target = 300,
+      },
     },
   })
 
@@ -50,6 +53,10 @@ local function test_distinct_real_values_change_signature()
     state = {
       interaction_phase = "shop",
       money = 4,
+      score = {
+        current = 25,
+        target = 300,
+      },
       jokers = {
         { name = "Joker" },
       },
@@ -60,6 +67,10 @@ local function test_distinct_real_values_change_signature()
     state = {
       interaction_phase = "shop",
       money = 5,
+      score = {
+        current = 25,
+        target = 300,
+      },
       jokers = {
         { name = "Joker" },
       },
@@ -67,6 +78,30 @@ local function test_distinct_real_values_change_signature()
   })
 
   assert_not_equal(first, second, "signature should change when gameplay-relevant state changes")
+end
+
+local function test_score_shape_changes_signature()
+  local first = Signature.make({
+    state = {
+      interaction_phase = "play_hand",
+      score = {
+        current = 120,
+        target = 300,
+      },
+    },
+  })
+
+  local second = Signature.make({
+    state = {
+      interaction_phase = "play_hand",
+      score = {
+        current = 180,
+        target = 300,
+      },
+    },
+  })
+
+  assert_not_equal(first, second, "signature should track canonical score fields")
 end
 
 local function test_pack_reward_open_pack_kind_changes_signature()
@@ -94,4 +129,5 @@ end
 test_missing_scalar_fields_still_produce_signature()
 test_missing_item_keys_do_not_crash()
 test_distinct_real_values_change_signature()
+test_score_shape_changes_signature()
 test_pack_reward_open_pack_kind_changes_signature()
