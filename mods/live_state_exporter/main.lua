@@ -444,15 +444,13 @@ local function summarize_joker(card)
   local center = safe_table(card.config) and safe_table(card.config.center) or {}
   local stickers = collect_stickers(card, ability, {})
 
-  local name = safe_tostring(first_non_nil(card.label, ability.name, ability.key, card.name, card.key))
-  if not name then
+  local key = safe_tostring(first_non_nil(ability.key, card.key))
+  if not key then
     return nil
   end
 
   return {
-    name = trim_text(name, EXPORT_MAX_STRING),
-    key = safe_tostring(first_non_nil(ability.key, card.key)),
-    joker_key = normalize_token(first_non_nil(ability.key, card.key, name)),
+    key = key,
     rarity = normalize_rarity(first_non_nil(center.rarity, ability.rarity)),
     edition = safe_tostring(first_non_nil(edition.type, edition.key, edition.name)),
     sell_price = safe_number(card.sell_cost),
@@ -461,18 +459,20 @@ local function summarize_joker(card)
   }
 end
 
-local function summarize_voucher(value, key_hint)
+local function summarize_voucher(value, key_hint, cost_hint)
   local voucher = safe_table(value) or {}
   local key = safe_tostring(first_non_nil(voucher.key, key_hint))
-  local name = safe_tostring(first_non_nil(voucher.name, voucher.label, key))
-  if not name and not key then
+  if not key then
     return nil
   end
-  return {
-    name = trim_text(name or key or "voucher", EXPORT_MAX_STRING),
+  local cost = safe_number(first_non_nil(voucher.cost, voucher.base_cost, cost_hint))
+  local summary = {
     key = key,
-    voucher_key = normalize_token(key or name),
   }
+  if cost ~= nil then
+    summary.cost = cost
+  end
+  return summary
 end
 
 local function collect_value_entries(payload, limit, summarize_fn)
@@ -570,17 +570,13 @@ local function summarize_consumable(card)
   local set_name = first_non_nil(ability.set, card.set, ability.consumeable_type)
   local key = safe_tostring(first_non_nil(ability.key, save_fields.center, card.key))
   local kind = normalize_consumable_kind(set_name, key)
-  local name = safe_tostring(first_non_nil(ability.name, card.label, card.name, key))
-  if not kind or not name then
+  if not kind or not key then
     return nil
   end
 
   return {
     kind = kind,
-    name = trim_text(name, EXPORT_MAX_STRING),
     key = key,
-    consumable_key = normalize_token(key or name),
-    consumable_kind = kind,
     edition = safe_tostring(first_non_nil(safe_table(card.edition) and card.edition.type, safe_table(card.edition) and card.edition.key, safe_table(card.edition) and card.edition.name)),
     sell_price = safe_number(card.sell_cost),
     debuffed = safe_bool(first_non_nil(card.debuffed, card.debuff)),
@@ -592,12 +588,10 @@ end
 local function summarize_tag(value, key_hint)
   local tag = safe_table(value) or {}
   local key = safe_tostring(first_non_nil(tag.key, key_hint))
-  local name = safe_tostring(first_non_nil(tag.name, tag.label, key))
-  if not name and not key then
+  if not key then
     return nil
   end
   return {
-    name = trim_text(name or key or "tag", EXPORT_MAX_STRING),
     key = key,
   }
 end
@@ -725,7 +719,7 @@ local function collect_used_vouchers(game, root)
     if value then
       local summary = summarize_voucher(nil, key)
       if summary then
-        push_unique(result, seen, summary.key or summary.name, summary)
+        push_unique(result, seen, summary.key, summary)
       end
     end
   end
@@ -734,9 +728,14 @@ local function collect_used_vouchers(game, root)
     if #result >= EXPORT_MAX_VOUCHERS then
       break
     end
-    local summary = summarize_voucher(safe_table(card.ability) or card, safe_tostring(first_non_nil(card.key, safe_table(card.ability) and card.ability.key)))
+    local ability = safe_table(card.ability) or {}
+    local summary = summarize_voucher(
+      ability,
+      safe_tostring(first_non_nil(card.key, ability.key)),
+      first_non_nil(card.cost, card.base_cost, ability.cost)
+    )
     if summary then
-      push_unique(result, seen, summary.key or summary.name, summary)
+      push_unique(result, seen, summary.key, summary)
     end
   end
   return result
@@ -752,7 +751,7 @@ local function collect_tags(game, root)
     end
     local summary = summarize_tag(value, key_hint)
     if summary then
-      push_unique(result, seen, summary.key or summary.name, summary)
+      push_unique(result, seen, summary.key, summary)
     end
   end
 
@@ -827,11 +826,14 @@ local function collect_blind_choices(game)
   for _, slot in ipairs(slot_order) do
     local key = safe_tostring(blind_choices[slot])
     if key then
+      local state = safe_tostring(blind_states[slot])
+      local tag_key = safe_tostring(blind_tags[slot])
       result[#result + 1] = {
         slot = slot,
         key = key,
-        state = safe_tostring(blind_states[slot]),
-        tag = safe_tostring(blind_tags[slot]),
+        state = state,
+        tag_key = tag_key,
+        tag_claimed = state == "Skipped" and tag_key ~= nil,
       }
       seen[slot] = true
     end
@@ -839,11 +841,14 @@ local function collect_blind_choices(game)
 
   for slot, key in pairs(blind_choices) do
     if not seen[slot] then
+      local state = safe_tostring(blind_states[slot])
+      local tag_key = safe_tostring(blind_tags[slot])
       result[#result + 1] = {
         slot = safe_tostring(slot),
         key = safe_tostring(key),
-        state = safe_tostring(blind_states[slot]),
-        tag = safe_tostring(blind_tags[slot]),
+        state = state,
+        tag_key = tag_key,
+        tag_claimed = state == "Skipped" and tag_key ~= nil,
       }
     end
   end
@@ -914,12 +919,15 @@ local function summarize_shop_item(card, area_kind)
 
   local consumable = summarize_consumable(card)
   if consumable then
+      local consumable_name = safe_tostring(first_non_nil(ability.name, card.label, card.name, consumable.key))
+      if not consumable_name then
+        return nil
+      end
       return {
         kind = "consumable",
         item_kind = "consumable",
-        name = consumable.name,
+        name = trim_text(consumable_name, EXPORT_MAX_STRING),
         key = consumable.key,
-        consumable_key = consumable.consumable_key,
         cost = consumable.cost,
         consumable_kind = consumable.kind,
         edition = safe_tostring(first_non_nil(edition.type, edition.key, edition.name)),
@@ -931,12 +939,15 @@ local function summarize_shop_item(card, area_kind)
 
   local joker = summarize_joker(card)
   if joker and area_kind == "joker" then
+      local joker_name = safe_tostring(first_non_nil(card.label, ability.name, ability.key, card.name, card.key))
+      if not joker_name then
+        return nil
+      end
       return {
         kind = "joker",
         item_kind = "joker",
-        name = joker.name,
+        name = trim_text(joker_name, EXPORT_MAX_STRING),
         key = joker.key,
-        joker_key = joker.joker_key,
         cost = item_cost,
         rarity = joker.rarity,
         edition = joker.edition,
@@ -1010,12 +1021,15 @@ end
 local function collect_skip_tags(blind_choices)
   local result = {}
   for _, blind_choice in ipairs(blind_choices or {}) do
-    if blind_choice.tag then
-      result[#result + 1] = {
+    if blind_choice.tag_key then
+      local summary = {
         slot = normalize_token(blind_choice.slot),
-        tag_key = normalize_token(blind_choice.tag),
-        claimed = normalize_token(blind_choice.state) == "skipped",
+        key = normalize_token(blind_choice.tag_key),
       }
+      if blind_choice.tag_claimed then
+        summary.claimed = true
+      end
+      result[#result + 1] = summary
     end
   end
   return result
@@ -1172,33 +1186,17 @@ local function collect_shop_vouchers(root)
     if #result >= EXPORT_MAX_VOUCHERS then
       break
     end
+    local ability = safe_table(card.ability) or {}
     local summary = summarize_voucher(
-      safe_table(card.ability) or card,
-      safe_tostring(first_non_nil(card.key, safe_table(card.ability) and card.ability.key))
+      ability,
+      safe_tostring(first_non_nil(card.key, ability.key)),
+      first_non_nil(card.cost, card.base_cost, ability.cost)
     )
     if summary then
-      push_unique(result, seen, summary.key or summary.name, summary)
+      push_unique(result, seen, summary.key, summary)
     end
   end
   return result
-end
-
-local function collect_skip_tag_claim(root, game)
-  local round_resets = safe_table(game.round_resets) or {}
-  local blind_states = safe_table(round_resets.blind_states) or {}
-  local blind_tags = safe_table(round_resets.blind_tags) or {}
-  local last_claimed = nil
-
-  for _, slot in ipairs({ "Small", "Big", "Boss" }) do
-    if blind_states[slot] == "Skipped" then
-      last_claimed = summarize_tag(nil, blind_tags[slot])
-    end
-  end
-
-  if last_claimed then
-    return true, last_claimed
-  end
-  return false, nil
 end
 
 local function infer_phase(root, game)
@@ -1258,7 +1256,6 @@ local function snapshot_game()
   local jokers_area = safe_table(root and rawget(root, "jokers"))
   local hand_area = safe_table(root and rawget(root, "hand"))
   local consumables_inventory = collect_consumables_from_area(consumeables_area, EXPORT_MAX_CONSUMABLES)
-  local consumables_shop = collect_consumables_from_area(root and rawget(root, "shop_jokers"), EXPORT_MAX_CONSUMABLES)
   local shop_items = collect_shop_items(root)
   local shop_vouchers = collect_shop_vouchers(root)
   local deck = summarize_deck(game)
@@ -1268,7 +1265,6 @@ local function snapshot_game()
   local booster_packs = collect_booster_packs(game, root)
   local blind_choices = collect_blind_choices(game)
   local skip_tags = collect_skip_tags(blind_choices)
-  local skip_tag_claimed, skip_tag = collect_skip_tag_claim(root, game)
   local selected_cards = collect_selected_cards(root)
   local highlighted_card = collect_highlighted_card(root)
   local shop_discounts = collect_shop_discounts(game)
@@ -1329,7 +1325,6 @@ local function snapshot_game()
       hand_cards = hand_cards,
       shop_cards = shop_cards,
       consumables = consumables_inventory,
-      consumables_shop = consumables_shop,
       skip_tags = skip_tags,
       shop_items = shop_items,
       selected_cards = selected_cards,
@@ -1338,8 +1333,6 @@ local function snapshot_game()
       pack_reward_cards = pack_reward_cards,
       tags = tags,
       booster_packs = booster_packs,
-      skip_tag_claimed = skip_tag_claimed,
-      skip_tag = skip_tag,
       notes = {
         "exporter=live_state_exporter",
       },
